@@ -14,7 +14,6 @@ use App\Jobs\ApiHook;
 use App\Jobs\MailSend;
 use App\Jobs\OrderExpired;
 use App\Jobs\ServerJiang;
-use App\Jobs\TelegramPush;
 use App\Jobs\BarkPush;
 use App\Jobs\WorkWeiXinPush;
 use App\Models\BaseModel;
@@ -117,6 +116,14 @@ class OrderProcessService
      * @var int
      */
     private $payID;
+
+    /** @var int|null */
+    private $customerId;
+
+    public function setCustomerId(?int $customerId): void
+    {
+        $this->customerId = $customerId;
+    }
 
     public function __construct()
     {
@@ -313,6 +320,7 @@ class OrderProcessService
     {
         try {
             $order = new Order();
+            $order->customer_id = $this->customerId;
             // 生成订单号
             $order->order_sn = strtoupper(Str::random(16));
             // 设置商品
@@ -412,13 +420,12 @@ class OrderProcessService
             // 销量加上
             $this->goodsService->salesVolumeIncr($order->goods_id, $order->buy_amount);
             DB::commit();
+            $telegramOrders = app(TelegramOrderNotificationService::class);
+            $telegramOrders->queuePaid($completedOrder);
+            $telegramOrders->queueStatus($completedOrder);
             // 如果开启了server酱
             if (dujiaoka_config_get('is_open_server_jiang', 0) == BaseModel::STATUS_OPEN) {
                 ServerJiang::dispatch($order);
-            }
-            // 如果开启了TG推送
-            if (dujiaoka_config_get('is_open_telegram_push', 0) == BaseModel::STATUS_OPEN) {
-                TelegramPush::dispatch($order);
             }
             // 如果开启了Bark推送
             if (dujiaoka_config_get('is_open_bark_push', 0) == BaseModel::STATUS_OPEN) {

@@ -56,6 +56,9 @@ class OrderController extends BaseController
      */
     public function createOrder(Request $request)
     {
+        if ($request->user()) {
+            $request->merge(['email' => $request->user()->email]);
+        }
         DB::beginTransaction();
         try {
             $this->orderService->validatorCreateOrder($request);
@@ -79,9 +82,11 @@ class OrderController extends BaseController
             $this->orderProcessService->setBuyIP($request->getClientIp());
             // 查询密码
             $this->orderProcessService->setSearchPwd($request->input('search_pwd', ''));
+            $this->orderProcessService->setCustomerId($request->user() ? (int) $request->user()->getKey() : null);
             // 创建订单
             $order = $this->orderProcessService->createOrder();
             DB::commit();
+            app(\App\Service\TelegramOrderNotificationService::class)->queueCreated($order);
             // 设置订单cookie
             $this->queueCookie($order->order_sn);
             return redirect(url('/bill', ['orderSN' => $order->order_sn]));

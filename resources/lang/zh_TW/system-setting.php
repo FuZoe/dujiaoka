@@ -31,8 +31,10 @@ return [
         'is_open_search_pwd' => '是否開啟查詢密碼',
         'is_open_server_jiang' => '是否開啟server醬',
         'server_jiang_token' => 'server醬通訊token',
-        'is_open_telegram_push' => '是否開啟Telegram推送',
-        'telegram_userid' => 'Telegram用戶id',
+        'is_open_telegram_restock' => '補貨通知',
+        'is_open_telegram_customer_order' => '顧客訂單私聊通知',
+        'telegram_send_order_cards' => '私聊通知發送卡密',
+        'telegram_userid' => 'Telegram目標頻道',
         'telegram_bot_token' => 'Telegram通訊token',
         'template' => '站點模板',
         'language' => '站點語言',
@@ -52,6 +54,12 @@ return [
         'is_open_geetest' => '是否開啟極驗',
     ],
     'options' => [
+    ],
+    'helps' => [
+        'is_open_telegram_restock' => '批量匯入卡密使庫存增加時發送，每個匯入批次最多一條。',
+        'is_open_telegram_customer_order' => '僅向已綁定帳戶對應的 Telegram 私聊發送該顧客自己的訂單事件；目標頻道始終只接收補貨公告。',
+        'telegram_send_order_cards' => '開啟後，自動發貨完成通知會包含卡密；關閉後僅發送狀態和受保護的訂單連結。',
+        'telegram_channel' => '頻道設定步驟：1. 將機器人加入目標頻道並設為管理員，至少授予「發佈訊息」權限。2. 公開頻道填寫 @channel_username（包含 @）。3. 私人頻道填寫 -100 開頭的數值 chat_id；可先給機器人發送訊息，再呼叫 Bot API getUpdates 查看 channel_post/chat/id，或把頻道訊息轉發給可查詢原始 chat_id 的機器人取得。請勿填寫個人或群組 chat_id。',
     ],
     'rule_messages' => [
         'save_system_setting_success' => '系統配置套用成功！',

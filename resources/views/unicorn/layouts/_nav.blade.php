@@ -9,6 +9,14 @@
         <nav class="store-nav-links" aria-label="主导航">
             <a class="@if(\Illuminate\Support\Facades\Request::path() == '/') active @endif" href="/">商品</a>
             <a class="@if(\Illuminate\Support\Facades\Request::url() == url('order-search')) active @endif" href="{{ url('order-search') }}">查订单</a>
+            @auth
+                <a class="@if(\Illuminate\Support\Facades\Request::is('account*')) active @endif" href="{{ route('account') }}">账户</a>
+                @if(!auth()->user()->isTelegramBound())
+                    <a class="telegram-nav-link" href="{{ route('telegram.bind') }}">绑定 Telegram</a>
+                @endif
+            @else
+                <a class="@if(\Illuminate\Support\Facades\Request::is('login') || \Illuminate\Support\Facades\Request::is('register')) active @endif" href="{{ route('login') }}">登录</a>
+            @endauth
         </nav>
     </div>
 </header>

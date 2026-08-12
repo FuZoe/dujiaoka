@@ -59,10 +59,18 @@ class SystemSetting extends Form
             $this->switch('is_open_server_jiang', admin_trans('system-setting.fields.is_open_server_jiang'))
                 ->default(BaseModel::STATUS_CLOSE);
             $this->text('server_jiang_token', admin_trans('system-setting.fields.server_jiang_token'));
-            $this->switch('is_open_telegram_push', admin_trans('system-setting.fields.is_open_telegram_push'))
-                ->default(BaseModel::STATUS_CLOSE);
             $this->text('telegram_bot_token', admin_trans('system-setting.fields.telegram_bot_token'));
-            $this->text('telegram_userid', admin_trans('system-setting.fields.telegram_userid'));
+            $this->text('telegram_userid', admin_trans('system-setting.fields.telegram_userid'))
+                ->help(admin_trans('system-setting.helps.telegram_channel'));
+            $this->switch('is_open_telegram_restock', admin_trans('system-setting.fields.is_open_telegram_restock'))
+                ->default(BaseModel::STATUS_CLOSE)
+                ->help(admin_trans('system-setting.helps.is_open_telegram_restock'));
+            $this->switch('is_open_telegram_customer_order', admin_trans('system-setting.fields.is_open_telegram_customer_order'))
+                ->default(BaseModel::STATUS_CLOSE)
+                ->help(admin_trans('system-setting.helps.is_open_telegram_customer_order'));
+            $this->switch('telegram_send_order_cards', admin_trans('system-setting.fields.telegram_send_order_cards'))
+                ->default(BaseModel::STATUS_OPEN)
+                ->help(admin_trans('system-setting.helps.telegram_send_order_cards'));
             $this->switch('is_open_bark_push', admin_trans('system-setting.fields.is_open_bark_push'))
                 ->default(BaseModel::STATUS_CLOSE);
             $this->switch('is_open_bark_push_url', admin_trans('system-setting.fields.is_open_bark_push_url'))
