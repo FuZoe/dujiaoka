@@ -30,4 +30,10 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    'telegram' => [
+        'proxy' => env('TELEGRAM_PROXY'),
+        'connect_timeout' => env('TELEGRAM_CONNECT_TIMEOUT', 5),
+        'timeout' => env('TELEGRAM_TIMEOUT', 15),
+    ],
+
 ];

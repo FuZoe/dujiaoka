@@ -1,0 +1,22 @@
+[Unit]
+Description=NewZoe shop bridge to local Telegram proxy
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+Environment=LISTEN_HOST=172.19.0.1
+Environment=LISTEN_PORT=17895
+Environment=UPSTREAM_HOST=127.0.0.1
+Environment=UPSTREAM_PORT=7890
+ExecStart=/usr/bin/python3 /opt/dujiaoka/docker/telegram-proxy-bridge.py
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
