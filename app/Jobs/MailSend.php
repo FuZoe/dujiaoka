@@ -75,7 +75,12 @@ class MailSend implements ShouldQueue
         config([
             'mail'  =>  array_merge(config('mail'), $mailConfig)
         ]);
-        // 重新注册驱动
+        // Queue workers are long-lived. Drop mail instances so every job uses the
+        // latest settings saved in the admin panel.
+        foreach (['mailer', 'swift.mailer', 'swift.transport'] as $service) {
+            app()->forgetInstance($service);
+        }
+        Mail::clearResolvedInstance('mailer');
         (new MailServiceProvider(app()))->register();
         Mail::send(['html' => 'email.mail'], ['body' => $body], function ($message) use ($to, $title){
             $message->to($to)->subject($title);
