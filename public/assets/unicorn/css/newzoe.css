@@ -261,6 +261,8 @@ a:hover { color: inherit; }
 @media (max-width: 430px) {
     .store-shell, .narrow-shell, .search-shell { width: calc(100% - 22px); }
     .store-nav-links { gap: 12px; font-size: 13px; }
+    .store-brand span { display: none; }
+    .telegram-nav-link { white-space: nowrap; }
     .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
     .product-media { aspect-ratio: 1 / .78; }
     .delivery-tag { top: 6px; left: 6px; padding: 3px 5px; font-size: 10px; }
@@ -280,4 +282,48 @@ a:hover { color: inherit; }
     .search-tabs { grid-template-columns: 1fr; }
     .qr-frame { width: 246px; height: 246px; }
     .qr-frame img { width: 220px; height: 220px; }
+}
+
+.account-page { padding-top: 36px; }
+.auth-shell { width: min(460px, calc(100% - 28px)); }
+.auth-panel, .account-section { border: 1px solid var(--line); border-radius: 7px; background: #fff; padding: 24px; }
+.auth-panel h1 { margin: 6px 0 8px; font-size: 27px; }
+.auth-panel > p, .account-heading p, .telegram-status p { margin: 0 0 20px; color: var(--muted); }
+.auth-panel .field + .field { margin-top: 14px; }
+.auth-panel .primary-action { margin-top: 18px; }
+.auth-switch { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 16px; color: var(--muted); text-align: center; }
+.auth-switch a, .section-heading a { color: var(--green); font-weight: 700; }
+.account-shell { width: min(900px, calc(100% - 40px)); }
+.account-heading { align-items: center; }
+.account-heading h1 { margin: 4px 0; }
+.account-heading p { margin-bottom: 0; }
+.text-action { background: transparent; color: var(--muted); font-weight: 700; }
+.text-action.danger { color: var(--red); }
+.account-notice { border: 1px solid #bce5cb; border-radius: 6px; background: #effaf3; color: #08703c; margin-bottom: 16px; padding: 11px 14px; }
+.account-section + .account-section { margin-top: 16px; }
+.telegram-status, .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.telegram-status h2, .section-heading h2 { margin: 5px 0 7px; font-size: 21px; }
+.telegram-status p { margin-bottom: 0; }
+.account-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; }
+.compact-action { width: auto; min-width: 150px; }
+.section-heading { border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+.account-orders { display: grid; }
+.account-order { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid #edf1ee; padding: 15px 0; color: var(--ink); }
+.account-order:last-child { border-bottom: 0; }
+.account-order > div { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.account-order > div:last-child { flex: 0 0 auto; align-items: flex-end; }
+.account-order span { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.bind-panel { text-align: center; }
+.bind-qr { width: 238px; height: 238px; display: grid; place-items: center; border: 1px solid var(--line); margin: 18px auto; }
+.bind-qr img { width: 220px; height: 220px; }
+.bind-panel .secondary-action { display: block; margin-top: 10px; }
+
+@media (max-width: 620px) {
+    .account-page { padding-top: 22px; }
+    .account-shell { width: calc(100% - 22px); }
+    .auth-panel, .account-section { padding: 18px; }
+    .telegram-status, .section-heading, .account-order { align-items: flex-start; flex-direction: column; }
+    .account-actions { width: 100%; flex-wrap: wrap; }
+    .account-actions .primary-action, .account-actions .secondary-action { flex: 1 1 160px; text-align: center; }
+    .account-order > div:last-child { align-items: flex-start; }
 }

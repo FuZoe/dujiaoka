@@ -143,4 +143,14 @@ class Order extends BaseModel
         return $this->belongsTo(Pay::class, 'pay_id');
     }
 
+    public function customer()
+    {
+        return $this->belongsTo(Customer::class, 'customer_id');
+    }
+
+    public function telegramNotifications()
+    {
+        return $this->hasMany(TelegramOrderNotification::class, 'order_id');
+    }
+
 }

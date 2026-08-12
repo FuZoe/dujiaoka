@@ -34,6 +34,8 @@ return [
         'proxy' => env('TELEGRAM_PROXY'),
         'connect_timeout' => env('TELEGRAM_CONNECT_TIMEOUT', 5),
         'timeout' => env('TELEGRAM_TIMEOUT', 15),
+        'bot_username' => env('TELEGRAM_BOT_USERNAME'),
+        'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
     ],
 
 ];

@@ -16,3 +16,7 @@
 ## 📢停更通知2026/02/12
 
 ### 项目已经停止更新和维护，请前往新版[Dujiao-Next(dujiao-next.com)](https://dujiao-next.com)
+
+## NewZoe Telegram 通知
+
+补货频道公告、顾客账户绑定、订单私聊同步与 webhook 部署说明见 [docs/telegram-notifications.md](docs/telegram-notifications.md)。

@@ -17,7 +17,7 @@ class TelegramRestockNotificationTest extends TestCase
         Cache::forever('system-setting', [
             'is_open_telegram_restock' => 1,
             'telegram_bot_token' => 'TOKEN',
-            'telegram_userid' => 'CHANNEL_ID',
+            'telegram_userid' => '@restock_channel',
         ]);
     }
 
@@ -26,7 +26,7 @@ class TelegramRestockNotificationTest extends TestCase
         $client = Mockery::mock(TelegramBotClient::class);
         $client->shouldReceive('sendMessage')
             ->once()
-            ->with('TOKEN', 'CHANNEL_ID', 'message')
+            ->with('TOKEN', '@restock_channel', 'message')
             ->andReturn(101);
 
         $job = new TelegramRestockNotification('stable-batch-id', 42, 'message');

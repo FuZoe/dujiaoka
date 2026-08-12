@@ -12,10 +12,10 @@ class ExampleTest extends TestCase
      *
      * @return void
      */
-    public function testBasicTest()
+    public function test_unknown_page_returns_not_found()
     {
-        $response = $this->get('/');
+        $response = $this->get('/definitely-missing-page');
 
-        $response->assertStatus(200);
+        $response->assertStatus(404);
     }
 }

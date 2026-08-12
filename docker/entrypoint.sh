@@ -15,6 +15,7 @@ until php artisan newzoe:bootstrap; do
     sleep 3
 done
 
+php artisan migrate --force
 php artisan view:clear
 php artisan route:clear
 exec supervisord

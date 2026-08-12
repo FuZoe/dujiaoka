@@ -32,6 +32,24 @@ Route::group(['middleware' => ['dujiaoka.boot'],'namespace' => 'Home'], function
     Route::post('search-order-by-email', 'OrderController@searchOrderByEmail');
     // 通过浏览器查询
     Route::post('search-order-by-browser', 'OrderController@searchOrderByBrowser');
+
+    Route::middleware('guest')->group(function () {
+        Route::get('login', 'AccountController@showLogin')->name('login');
+        Route::get('register', 'AccountController@showRegister')->name('register');
+        Route::middleware('throttle:5,1')->group(function () {
+            Route::post('login', 'AccountController@login');
+            Route::post('register', 'AccountController@register');
+        });
+    });
+
+    Route::middleware('auth')->group(function () {
+        Route::post('logout', 'AccountController@logout')->name('logout');
+        Route::get('account', 'AccountController@account')->name('account');
+        Route::get('account/orders/{id}', 'AccountController@order')->name('account.order');
+        Route::get('account/telegram/bind', 'TelegramBindingController@create')->name('telegram.bind');
+        Route::get('account/telegram/bind/{id}/status', 'TelegramBindingController@status')->name('telegram.bind.status');
+        Route::delete('account/telegram', 'TelegramBindingController@destroy')->name('telegram.unbind');
+    });
 });
 
 Route::group(['middleware' => ['install.check'],'namespace' => 'Home'], function () {
@@ -40,4 +58,3 @@ Route::group(['middleware' => ['install.check'],'namespace' => 'Home'], function
     // 执行安装
     Route::post('do-install', 'HomeController@doInstall');
 });
-

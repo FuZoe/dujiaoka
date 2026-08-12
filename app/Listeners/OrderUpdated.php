@@ -5,9 +5,9 @@ namespace App\Listeners;
 use App\Jobs\MailSend;
 use App\Models\Emailtpl;
 use App\Models\Order;
-use Illuminate\Contracts\Queue\ShouldQueue;
-use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Support\Facades\DB;
 use App\Events\OrderUpdated as OrderUpdatedEvent;
+use App\Service\TelegramOrderNotificationService;
 
 class OrderUpdated
 {
@@ -29,6 +29,9 @@ class OrderUpdated
      */
     public function handle(OrderUpdatedEvent $event)
     {
+        if ($event->order->wasChanged('status') && DB::transactionLevel() === 0) {
+            app(TelegramOrderNotificationService::class)->queueStatus($event->order);
+        }
         $sysCache = cache('system-setting');
         // 当代充商品状态，将会对顾客进行订单内容推送
         $order = [

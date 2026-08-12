@@ -88,7 +88,9 @@ class RestockNotificationService
 
     private function hasTelegramConfiguration(): bool
     {
+        $channel = trim((string) dujiaoka_config_get('telegram_userid'));
+
         return trim((string) dujiaoka_config_get('telegram_bot_token')) !== ''
-            && trim((string) dujiaoka_config_get('telegram_userid')) !== '';
+            && preg_match('/^(?:@[A-Za-z][A-Za-z0-9_]{4,31}|-100[0-9]{6,})$/', $channel) === 1;
     }
 }

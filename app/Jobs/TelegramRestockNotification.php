@@ -50,6 +50,11 @@ class TelegramRestockNotification implements ShouldQueue
 
     public function handle(TelegramBotClient $client): void
     {
+        $channel = trim((string) dujiaoka_config_get('telegram_userid'));
+        if (preg_match('/^(?:@[A-Za-z][A-Za-z0-9_]{4,31}|-100[0-9]{6,})$/', $channel) !== 1) {
+            throw new RuntimeException('Telegram restock target is not a channel.');
+        }
+
         $sentKey = 'telegram-restock:sent:'.$this->batchId;
         $lock = Cache::lock('telegram-restock:lock:'.$this->batchId, 60);
 
@@ -74,7 +79,7 @@ class TelegramRestockNotification implements ShouldQueue
 
             $messageId = $client->sendMessage(
                 (string) dujiaoka_config_get('telegram_bot_token'),
-                (string) dujiaoka_config_get('telegram_userid'),
+                $channel,
                 $this->message
             );
             Cache::put($sentKey, true, now()->addDays(7));

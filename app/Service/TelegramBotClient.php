@@ -5,6 +5,7 @@ namespace App\Service;
 use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
 use RuntimeException;
+use Throwable;
 
 class TelegramBotClient
 {
@@ -32,18 +33,23 @@ class TelegramBotClient
         }
     }
 
-    public function sendMessage(string $token, string $chatId, string $message): int
+    public function sendMessage(string $token, string $chatId, string $message, array $payload = []): int
     {
-        $response = $this->client->post(
-            'https://api.telegram.org/bot'.$token.'/sendMessage',
-            array_merge($this->requestOptions, [
-                'form_params' => [
-                    'chat_id' => $chatId,
-                    'text' => $message,
-                    'disable_web_page_preview' => true,
-                ],
-            ])
-        );
+        $json = array_merge($payload, [
+            'chat_id' => trim($chatId),
+            'text' => $message,
+            'disable_web_page_preview' => true,
+        ]);
+        try {
+            $response = $this->client->post(
+                'https://api.telegram.org/bot'.$token.'/sendMessage',
+                array_merge($this->requestOptions, [
+                    'json' => $json,
+                ])
+            );
+        } catch (Throwable $exception) {
+            throw new RuntimeException('Telegram API request failed.');
+        }
         $payload = json_decode((string) $response->getBody(), true);
 
         if (empty($payload['ok']) || empty($payload['result']['message_id'])) {

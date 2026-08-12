@@ -51,7 +51,8 @@
                     <div class="field-grid">
                         <label class="field">
                             <span>接收邮箱</span>
-                            <input type="email" name="email" id="email" required placeholder="用于查询和接收订单" autocomplete="email">
+                            <input type="email" name="email" id="email" required placeholder="用于查询和接收订单" autocomplete="email"
+                                   value="{{ auth()->check() ? auth()->user()->email : '' }}" @auth readonly @endauth>
                         </label>
                         @if(dujiaoka_config_get('is_open_search_pwd') == \App\Models\Goods::STATUS_OPEN)
                             <label class="field">

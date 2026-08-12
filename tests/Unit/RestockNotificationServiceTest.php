@@ -49,7 +49,7 @@ class RestockNotificationServiceTest extends TestCase
         Cache::forever('system-setting', [
             'is_open_telegram_restock' => 1,
             'telegram_bot_token' => 'TOKEN',
-            'telegram_userid' => 'CHANNEL_ID',
+            'telegram_userid' => '@restock_channel',
         ]);
 
         $queued = (new RestockNotificationService())->dispatchForImport(
@@ -64,13 +64,37 @@ class RestockNotificationServiceTest extends TestCase
         Queue::assertPushed(TelegramRestockNotification::class, 1);
     }
 
+    /** @dataProvider validChannelTargets */
+    public function test_it_accepts_public_and_private_channel_targets(string $target): void
+    {
+        Queue::fake();
+        Cache::forever('system-setting', [
+            'is_open_telegram_restock' => 1,
+            'telegram_bot_token' => 'TOKEN',
+            'telegram_userid' => $target,
+        ]);
+
+        $this->assertTrue((new RestockNotificationService())->dispatchForImport(
+            $this->goods(), 0, 1, 1, 'target-'.$target
+        ));
+        Queue::assertPushed(TelegramRestockNotification::class, 1);
+    }
+
+    public function validChannelTargets(): array
+    {
+        return [
+            'public username' => ['@channel_username'],
+            'private channel id' => ['-1001234567890'],
+        ];
+    }
+
     public function test_it_does_not_queue_when_the_restock_switch_is_off(): void
     {
         Queue::fake();
         Cache::forever('system-setting', [
             'is_open_telegram_restock' => 0,
             'telegram_bot_token' => 'TOKEN',
-            'telegram_userid' => 'CHANNEL_ID',
+            'telegram_userid' => '@restock_channel',
         ]);
 
         $queued = (new RestockNotificationService())->dispatchForImport(
