@@ -4,8 +4,10 @@ namespace App\Admin\Forms;
 
 use App\Models\Carmis;
 use App\Models\Goods;
+use App\Service\RestockNotificationService;
 use Dcat\Admin\Widgets\Form;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class ImportCarmis extends Form
 {
@@ -45,7 +47,18 @@ class ImportCarmis extends Form
         if ($input['remove_duplication'] == 1) {
             $carmisData = assoc_unique($carmisData, 'carmi');
         }
-        Carmis::query()->insert($carmisData);
+        $goods = Goods::query()->findOrFail($input['goods_id']);
+        $stockBefore = $goods->carmis()->where('status', Carmis::STATUS_UNSOLD)->count();
+        $inserted = count($carmisData) > 0 && Carmis::query()->insert($carmisData);
+        $stockAfter = $goods->carmis()->where('status', Carmis::STATUS_UNSOLD)->count();
+
+        app(RestockNotificationService::class)->dispatchForImport(
+            $goods,
+            $stockBefore,
+            $stockAfter,
+            $inserted ? count($carmisData) : 0,
+            (string) Str::uuid()
+        );
         // 删除文件
         Storage::disk('public')->delete($input['carmis_txt']);
         return $this

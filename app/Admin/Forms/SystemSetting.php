@@ -63,6 +63,9 @@ class SystemSetting extends Form
                 ->default(BaseModel::STATUS_CLOSE);
             $this->text('telegram_bot_token', admin_trans('system-setting.fields.telegram_bot_token'));
             $this->text('telegram_userid', admin_trans('system-setting.fields.telegram_userid'));
+            $this->switch('is_open_telegram_restock', admin_trans('system-setting.fields.is_open_telegram_restock'))
+                ->default(BaseModel::STATUS_CLOSE)
+                ->help(admin_trans('system-setting.helps.is_open_telegram_restock'));
             $this->switch('is_open_bark_push', admin_trans('system-setting.fields.is_open_bark_push'))
                 ->default(BaseModel::STATUS_CLOSE);
             $this->switch('is_open_bark_push_url', admin_trans('system-setting.fields.is_open_bark_push_url'))

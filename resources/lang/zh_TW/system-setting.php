@@ -32,6 +32,7 @@ return [
         'is_open_server_jiang' => '是否開啟server醬',
         'server_jiang_token' => 'server醬通訊token',
         'is_open_telegram_push' => '是否開啟Telegram推送',
+        'is_open_telegram_restock' => '補貨通知',
         'telegram_userid' => 'Telegram用戶id',
         'telegram_bot_token' => 'Telegram通訊token',
         'template' => '站點模板',
@@ -52,6 +53,9 @@ return [
         'is_open_geetest' => '是否開啟極驗',
     ],
     'options' => [
+    ],
+    'helps' => [
+        'is_open_telegram_restock' => '批量匯入卡密使庫存增加時發送，每個匯入批次最多一條。',
     ],
     'rule_messages' => [
         'save_system_setting_success' => '系統配置套用成功！',

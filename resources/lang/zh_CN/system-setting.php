@@ -34,6 +34,7 @@ return [
         'is_open_server_jiang' => '是否开启server酱',
         'server_jiang_token' => 'server酱通讯token',
         'is_open_telegram_push' => '是否开启Telegram推送',
+        'is_open_telegram_restock' => '补货通知',
         'telegram_userid' => 'Telegram用户id',
         'telegram_bot_token' => 'Telegram通讯token',
 		'is_open_bark_push' => '是否开启Bark推送',
@@ -61,6 +62,9 @@ return [
         'is_open_geetest' => '是否开启极验',
     ],
     'options' => [
+    ],
+    'helps' => [
+        'is_open_telegram_restock' => '批量导入卡密使库存增加时发送，每个导入批次最多一条。',
     ],
     'rule_messages' => [
         'save_system_setting_success' => '系统配置保存成功！',

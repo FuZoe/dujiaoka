@@ -55,6 +55,7 @@ class NewzoeBootstrap extends Command
             'is_open_google_translate' => 0,
             'is_open_server_jiang' => 0,
             'is_open_telegram_push' => 0,
+            'is_open_telegram_restock' => 0,
             'is_open_bark_push' => 0,
             'is_open_qywxbot_push' => 0,
             'is_open_geetest' => 0,
