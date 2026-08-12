@@ -1,0 +1,50 @@
+services:
+  database:
+    image: mariadb:10.6
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      TZ: Asia/Shanghai
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - database_data:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - redis_data:/data
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      DB_HOST: database
+      REDIS_HOST: redis
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3220:80"
+    volumes:
+      - app_storage:/app/storage
+      - uploads:/app/public/uploads
+
+volumes:
+  app_storage:
+  database_data:
+  redis_data:
+  uploads:
