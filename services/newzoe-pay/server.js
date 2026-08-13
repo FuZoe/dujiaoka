@@ -200,7 +200,7 @@ return sendJson(res,200,{accepted:true,delivered:r.delivered,duplicate:r.duplica
 function handlePublicOrder(res,id){
 const order=orderById(id);
 if(!order)return sendJson(res,404,{error:'order_not_found'});
-if(order.status==='pending'){order.activatedAt=new Date(now()).toISOString();order.updatedAt=order.activatedAt;persist()}
+if(order.status==='pending'&&!order.activatedAt){order.activatedAt=new Date(now()).toISOString();order.updatedAt=order.activatedAt;persist()}
 const payee=orderPayee(order);const user=userByName(state,payee);
 return sendJson(res,200,{...pubOrder(order),payee,payeeDisplayName:user?.displayName||payee,qrcodeReady:!!payeeQrPath(payee)})
 }

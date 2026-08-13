@@ -226,6 +226,10 @@ test('same-amount orders settle FIFO while duplicate forwarding settles only onc
     await create('FIFOORDER0001');
     await create('FIFOORDER0002');
 
+    // Refreshing the first checkout must not move it behind the second order.
+    clock += 1000;
+    await fetch(`${baseUrl}/api/orders/FIFOORDER0001`);
+
     const firstFields = { content: '微信支付收款到账1.00元，今日第1笔', from: 'com.tencent.mm', title: '微信支付' };
     const first = await fetch(`${baseUrl}/api/smsf/notify`, { body: smsfForm(firstFields, String(clock)), method: 'POST' });
     assert.equal((await first.json()).orderId, 'FIFOORDER0001');
