@@ -1,0 +1,32 @@
+[Unit]
+Description=NewZoe payment and order service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/newzoe-pay
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=3210
+Environment=PAY_NOTIFY_SECRET_FILE=/etc/newzoe-pay/notify.secret
+Environment=SMSF_NOTIFY_SECRET_FILE=/etc/newzoe-pay/smsf.secret
+Environment=SHOP_API_SECRET_FILE=/etc/newzoe-pay/shop.secret
+Environment=PAY_ADMIN_PASSWORD_FILE=/etc/newzoe-pay/admin.password
+Environment=PAY_ADMIN_SESSION_SECRET_FILE=/etc/newzoe-pay/admin-session.secret
+Environment=PAY_STATE_FILE=/var/lib/newzoe-pay/state.json
+Environment=SHOP_ORDERS_URL=https://shop.newzoe.cloud/api/newzoe/orders
+Environment=SHOP_CALLBACK_ORIGIN=https://shop.newzoe.cloud
+ExecStart=/usr/bin/node /opt/newzoe-pay/server.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/newzoe-pay
+
+[Install]
+WantedBy=multi-user.target

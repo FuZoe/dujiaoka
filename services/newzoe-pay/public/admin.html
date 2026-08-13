@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f6f5">
+  <title>支付管理 | NewZoe Pay</title>
+  <link rel="stylesheet" href="/admin.css?v=20260813-1">
+</head>
+<body>
+  <header class="admin-header">
+    <a class="brand" href="/"><span class="brand-mark">N</span><span>NEWZOE PAY</span></a>
+    <nav class="admin-nav" id="admin-nav" hidden>
+      <button class="nav-tab active" data-tab="dashboard">仪表盘</button>
+      <button class="nav-tab" data-tab="users" id="nav-tab-users" hidden>用户管理</button>
+      <button class="nav-tab" data-tab="qrcode">收款码</button>
+      <button class="nav-tab" data-tab="settings">设置</button>
+    </nav>
+    <div class="header-right">
+      <span class="user-info" id="user-info" hidden></span>
+      <button class="icon-button" id="logout" type="button" hidden>退出</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Login -->
+    <section class="login-panel" id="login-panel">
+      <p class="eyebrow">管理入口</p>
+      <h1>支付与订单管理</h1>
+      <form id="login-form">
+        <label>用户名<input name="username" autocomplete="username" required></label>
+        <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+        <p class="form-error" id="login-error" role="alert"></p>
+        <button class="primary-button" type="submit">登录</button>
+      </form>
+    </section>
+
+    <!-- Dashboard Tab -->
+    <section class="tab-content active" id="tab-dashboard" hidden>
+      <div class="dashboard-title">
+        <div><p class="eyebrow">运营控制台</p><h1>订单</h1></div>
+        <button class="primary-button compact" id="open-create" type="button">新建收款单</button>
+      </div>
+      <p class="hint">普通商户仅显示当前账户的订单；超级管理员可审计全部商户订单。</p>
+      <div class="metrics" aria-label="订单概览">
+        <div><span>全部订单</span><strong id="metric-all">0</strong></div>
+        <div><span>待支付</span><strong id="metric-pending">0</strong></div>
+        <div><span>已支付</span><strong id="metric-paid">0</strong></div>
+        <div><span>已完成</span><strong id="metric-completed">0</strong></div>
+      </div>
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="搜索订单号或商品">
+        <select id="status-filter" aria-label="状态筛选">
+          <option value="">全部状态</option>
+          <option value="pending">待支付</option>
+          <option value="paid">已支付</option>
+          <option value="completed">已完成</option>
+          <option value="expired">已过期</option>
+        </select>
+        <button class="secondary-button" id="refresh" type="button">刷新</button>
+      </div>
+      <div class="table-shell">
+        <table>
+          <thead><tr><th>订单</th><th>商品</th><th>金额</th><th>收款人</th><th>来源</th><th>状态</th><th>创建时间</th><th></th></tr></thead>
+          <tbody id="orders-body"></tbody>
+        </table>
+        <p class="empty" id="empty" hidden>暂无订单</p>
+      </div>
+    </section>
+
+    <!-- Users Tab (super only) -->
+    <section class="tab-content" id="tab-users" hidden>
+      <div class="section-title"><p class="eyebrow">超级管理员</p><h1>用户管理</h1></div>
+      <div class="card">
+        <h3>创建管理员</h3>
+        <form id="create-user-form" class="inline-form-grid">
+          <label>用户名<input name="username" placeholder="小写字母和数字，2-32位" required></label>
+          <label>显示名称<input name="displayName" placeholder="如：小明" required></label>
+          <label>密码<input name="password" type="password" placeholder="至少6位" required></label>
+          <button class="primary-button compact" type="submit">创建用户</button>
+        </form>
+        <p class="form-error" id="create-user-error" role="alert"></p>
+      </div>
+      <div class="card" style="margin-top:20px">
+        <h3>现有管理员</h3>
+        <div class="table-shell" style="margin-top:12px">
+          <table>
+            <thead><tr><th>用户名</th><th>显示名称</th><th>角色</th><th>收款码</th><th>创建时间</th><th></th></tr></thead>
+            <tbody id="users-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- Reset password dialog -->
+      <dialog id="reset-pw-dialog">
+        <form id="reset-pw-form">
+          <div class="dialog-title"><h2>修改密码</h2><button class="close-button" type="button" id="close-reset-pw" aria-label="关闭">&times;</button></div>
+          <p class="hint" id="reset-pw-target"></p>
+          <label>新密码<input name="password" type="password" placeholder="至少6位" required></label>
+          <p class="form-error" id="reset-pw-error" role="alert"></p>
+          <button class="primary-button" type="submit">保存</button>
+        </form>
+      </dialog>
+    </section>
+
+    <!-- QR Code Tab -->
+    <section class="tab-content" id="tab-qrcode" hidden>
+      <div class="section-title"><p class="eyebrow">收款码</p><h1>上传微信收款码</h1></div>
+      <div class="card">
+        <h3>当前收款码</h3>
+        <div class="qr-preview" id="qr-preview">
+          <img id="qr-current-img" alt="当前收款码" hidden style="max-width:280px;border-radius:8px;border:1px solid #dfe4e1">
+          <p class="hint" id="qr-current-label">默认收款码</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:20px">
+        <h3>上传新收款码</h3>
+        <p class="hint">支持 JPG/PNG/GIF/WebP，最大 5MB。建议在微信「我」→「服务」→「收付款」→「二维码收款」中截图上传。</p>
+        <div class="inline-form" style="margin-top:14px">
+          <input type="file" id="qr-file-input" accept="image/*" style="max-width:320px">
+          <button class="primary-button compact" id="upload-qr" type="button">上传</button>
+        </div>
+        <p class="form-error" id="qr-upload-error" role="alert"></p>
+        <p class="form-success" id="qr-upload-success" role="status" hidden></p>
+      </div>
+    </section>
+
+    <!-- Settings Tab -->
+    <section class="tab-content" id="tab-settings" hidden>
+      <div class="section-title"><p class="eyebrow">配置</p><h1>SmsForwarder 设置</h1></div>
+      <div class="card">
+        <h3>Webhook 信息</h3>
+        <p class="hint">以下 Webhook 和 Secret 仅属于当前登录商户，请勿与其他商户混用。</p>
+        <p class="hint">到账金额会匹配当前商户最近打开的同金额待支付订单；这里不设置固定金额。</p>
+        <div class="config-grid" id="smsf-config-grid">
+          <div class="config-item"><span>Webhook URL</span><code id="cfg-webhook">加载中...</code><button class="copy-btn" data-copy="cfg-webhook">复制</button></div>
+          <div class="config-item"><span>签名 Secret</span><code id="cfg-secret">加载中...</code><button class="copy-btn" data-copy="cfg-secret">复制</button></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:20px">
+        <h3>手机配置步骤</h3>
+        <p class="hint">详细的图文配置教程请查看 <a href="/docs" target="_blank">配置文档</a>。</p>
+        <ol class="steps-list">
+          <li>下载安装 <a href="https://github.com/pppscn/SmsForwarder/releases" target="_blank" rel="noopener">SmsForwarder</a></li>
+          <li>打开 SmsForwarder → 发送通道 → 添加 Webhook 通道</li>
+          <li>填入上方 Webhook URL，请求方式选择 POST</li>
+          <li>在「规则」中添加规则，选择「微信」应用 (com.tencent.mm)</li>
+          <li>将规则关联到刚才创建的 Webhook 通道</li>
+        </ol>
+      </div>
+      <div class="card" style="margin-top:20px">
+        <div class="section-row"><div><h3>最近转发记录</h3><p class="hint">记录服务器实际收到并验签通过的消息。手机显示成功不代表已经匹配订单，请以此处结果为准。</p></div><button class="secondary-button compact" id="refresh-smsf-events" type="button">刷新</button></div>
+        <div class="table-shell" style="margin-top:12px">
+          <table>
+            <thead><tr><th>服务器收到时间</th><th>金额</th><th>商户</th><th>结果</th><th>订单号</th></tr></thead>
+            <tbody id="smsf-events-body"></tbody>
+          </table>
+          <p class="empty" id="smsf-events-empty" hidden>服务器尚未收到转发消息</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Create Order Dialog -->
+  <dialog id="create-dialog">
+    <form id="create-form">
+      <div class="dialog-title"><div><p class="eyebrow">手工订单</p><h2>新建收款单</h2></div><button class="close-button" type="button" id="close-create" aria-label="关闭">&times;</button></div>
+      <label>订单说明<input name="title" maxlength="160" value="手工收款订单" required></label>
+      <label>收款金额（元）<input name="amount" type="number" inputmode="decimal" min="0.01" max="999999.99" step="0.01" placeholder="例如 9.90" required></label>
+      <p class="form-error" id="create-error" role="alert"></p>
+      <button class="primary-button" type="submit">创建并生成付款链接</button>
+    </form>
+  </dialog>
+
+  <!-- Created Dialog -->
+  <dialog id="created-dialog" class="created-dialog">
+    <p class="eyebrow">创建成功</p><h2>付款链接已生成</h2>
+    <a id="created-link" target="_blank" rel="noopener"></a>
+    <div class="dialog-actions">
+      <button class="secondary-button" id="copy-link" type="button">复制链接</button>
+      <button class="primary-button compact" id="open-link" type="button">打开收银台</button>
+    </div>
+  </dialog>
+
+  <!-- Confirm dialog -->
+  <dialog id="confirm-dialog">
+    <div class="dialog-title"><h2 id="confirm-title">确认操作</h2><button class="close-button" type="button" id="close-confirm" aria-label="关闭">&times;</button></div>
+    <p id="confirm-msg"></p>
+    <div class="dialog-actions">
+      <button class="secondary-button" id="confirm-cancel" type="button">取消</button>
+      <button class="primary-button" id="confirm-ok" type="button" style="background:#c83232">确认</button>
+    </div>
+  </dialog>
+
+  <script src="/admin.js?v=20260813-1" defer></script>
+</body>
+</html>

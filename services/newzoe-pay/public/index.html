@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f6f5">
+  <meta name="description" content="NewZoe 微信支付收银台">
+  <title>微信支付 | NewZoe</title>
+  <link rel="stylesheet" href="/app.css?v=20260812-11">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="NewZoe Pay 首页">
+      <span class="brand-mark" aria-hidden="true">N</span>
+      <span>NEWZOE PAY</span>
+    </a>
+    <span class="secure-label"><span class="secure-dot"></span>安全支付</span>
+  </header>
+
+  <main class="checkout is-placeholder" id="checkout">
+    <section class="summary" aria-labelledby="payment-title">
+      <div class="placeholder-copy" id="placeholder-copy">
+        <p class="eyebrow">NEWZOE PAY</p>
+        <h1 class="placeholder-title" id="placeholder-title">等待订单</h1>
+        <p class="placeholder-detail" id="placeholder-detail">请通过完整付款链接进入收银台</p>
+        <button class="retry-button" id="retry-load" type="button" hidden>重新加载</button>
+      </div>
+
+      <div id="order-summary" hidden>
+        <p class="eyebrow" id="payment-label">微信支付</p>
+        <h1 id="payment-title">支付金额</h1>
+        <p class="amount"><span>¥</span><b id="payment-amount"></b></p>
+        <p class="order-reference" id="order-reference" hidden></p>
+        <p class="recipient">收款方 <strong id="payment-recipient">NewZoe</strong></p>
+        <div class="amount-warning" role="note">
+          <span class="amount-warning-icon" aria-hidden="true">!</span>
+          <p>请仔细核对金额，显示金额多少就付多少，否则机器无法识别。</p>
+        </div>
+      </div>
+
+      <div class="payment-status" id="payment-status" role="status" aria-live="polite" hidden>
+        <span class="status-spinner" aria-hidden="true"></span>
+        <span>
+          <strong id="status-title">等待支付</strong>
+          <small id="status-detail">到账后本页将自动更新</small>
+        </span>
+      </div>
+    </section>
+
+    <section class="code-area" id="code-area" aria-label="支付状态">
+      <div class="placeholder-animation" id="placeholder-animation" aria-hidden="true">
+        <span class="orbit orbit-outer"><i></i></span>
+        <span class="orbit orbit-inner"><i></i></span>
+        <span class="animation-core">N</span>
+      </div>
+      <div class="qr-content" id="qr-content" hidden>
+        <div class="qr-frame">
+          <div class="qr-crop">
+            <img id="payment-qrcode" alt="微信收款二维码" width="1258" height="1714" hidden>
+          </div>
+          <span class="scan-line" aria-hidden="true"></span>
+        </div>
+        <p class="code-caption"><span class="wechat-mark" aria-hidden="true">✓</span>微信扫码支付</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span id="footer-amount">NEWZOE PAY</span>
+    <span class="footer-divider" aria-hidden="true"></span>
+    <span id="footer-status">等待订单</span>
+  </footer>
+
+  <dialog class="success-dialog" id="success-dialog" aria-labelledby="success-title">
+    <div class="success-icon" aria-hidden="true">✓</div>
+    <h2 id="success-title">支付成功</h2>
+    <p id="success-message">订单已支付。</p>
+    <button type="button" id="close-success">完成</button>
+  </dialog>
+
+  <script src="/app.js?v=20260812-11" defer></script>
+</body>
+</html>

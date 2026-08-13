@@ -6,6 +6,8 @@
 /vendor
 .env
 .env.backup
+services/newzoe-pay/public/wechat-pay.jpg
+services/newzoe-pay/public/qrcodes/
 .phpunit.result.cache
 Homestead.json
 Homestead.yaml

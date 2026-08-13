@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SmsForwarder 配置指南 | NewZoe Pay</title>
+<style>
+:root{color:#17211c;background:#f4f6f5;font-family:Inter,"PingFang SC","Microsoft YaHei",system-ui,sans-serif}
+body{margin:0;padding:0}
+.container{max-width:800px;margin:0 auto;padding:40px 24px}
+h1{font-size:32px;margin:0 0 8px}
+h2{font-size:20px;margin:32px 0 12px;padding-bottom:8px;border-bottom:2px solid #dfe4e1}
+h3{font-size:16px;margin:24px 0 8px}
+p,li{line-height:1.75;color:#354139;font-size:14px}
+code{background:#eef1ef;padding:2px 6px;border-radius:4px;font-size:13px}
+pre{background:#1e2420;color:#e2f2d9;padding:16px;border-radius:8px;overflow-x:auto;font-size:13px;line-height:1.6}
+pre code{background:transparent;color:inherit;padding:0}
+.card{border:1px solid #dfe4e1;border-radius:8px;padding:24px;margin:16px 0;background:#fff}
+.step-num{display:inline-flex;width:28px;height:28px;align-items:center;justify-content:center;background:#078f49;color:#fff;border-radius:50%;font-weight:700;font-size:14px;margin-right:8px;flex-shrink:0}
+.step-title{display:flex;align-items:center;font-weight:700;font-size:15px}
+.note{background:#fffbe6;border-left:4px solid #f0c040;padding:12px 16px;border-radius:0 6px 6px 0;margin:16px 0;font-size:13px;color:#6b5800}
+.warning{background:#fff0f0;border-left:4px solid #c83232;padding:12px 16px;border-radius:0 6px 6px 0;margin:16px 0;font-size:13px;color:#7a1a1a}
+.back-link{display:inline-block;margin-bottom:24px;color:#078f49;text-decoration:none;font-weight:650;font-size:13px}
+.back-link:hover{text-decoration:underline}
+figure.screenshot{margin:20px 0 4px}
+figure.screenshot a{display:block;width:min(100%,420px);margin:0 auto;border:1px solid #dfe4e1;border-radius:8px;overflow:hidden;background:#eef1ef;box-shadow:0 8px 24px rgba(23,33,28,.08)}
+figure.screenshot img{display:block;width:100%;height:auto}
+figure.screenshot figcaption{max-width:560px;margin:10px auto 0;color:#748079;font-size:13px;line-height:1.6;text-align:center}
+.zoom-hint{color:#078f49;font-weight:650}
+.config-value{display:flex;align-items:center;gap:8px;min-width:0}
+.config-value code{overflow-wrap:anywhere;word-break:break-word}
+.copy-config{flex:0 0 auto;border:1px solid #cfd8d3;border-radius:4px;background:#fff;color:#078f49;padding:4px 8px;font:inherit;font-size:12px;font-weight:650;cursor:pointer}
+.copy-config:hover{border-color:#078f49;background:#f3fbf7}
+.copy-config[hidden]{display:none}
+ul,ol{padding-left:20px}
+@media(max-width:560px){
+  .container{padding:28px 14px}
+  .card{padding:19px 16px}
+  h1{font-size:27px}
+  table{display:block;overflow-x:auto}
+  figure.screenshot{margin-top:16px}
+}
+</style>
+</head>
+<body>
+<div class="container">
+<a href="/admin" class="back-link">&larr; 返回管理后台</a>
+<h1>SmsForwarder 配置指南</h1>
+<p>本指南教你如何在 Android 手机上安装和配置 SmsForwarder，让微信收款到账通知自动转发到服务器，实现自动确认支付。</p>
+
+<div class="note"><strong>前提条件</strong>：你需要一台 Android 手机，并且手机已安装微信并登录你的收款微信号。</div>
+
+<h2>第一步：下载安装 SmsForwarder</h2>
+<div class="card">
+<div class="step-title"><span class="step-num">1</span>下载 APK</div>
+<p>在手机浏览器中打开以下链接，下载最新版 SmsForwarder：</p>
+<p><a href="https://github.com/pppscn/SmsForwarder/releases" target="_blank" rel="noopener">https://github.com/pppscn/SmsForwarder/releases</a></p>
+<p>选择最新的 <code>.apk</code> 文件下载。如果手机提示"未知来源"，请在设置中允许安装来自浏览器的应用。</p>
+</div>
+
+<div class="card">
+<div class="step-title"><span class="step-num">2</span>安装并打开</div>
+<p>下载完成后点击安装。安装完成后打开 <strong>SmsForwarder</strong>（图标是一个信封）。</p>
+<p>首次打开时，应用会请求通知权限和后台运行权限，请<strong>全部允许</strong>，否则无法读取微信通知。</p>
+<p>进入底部 <strong>「通用设置」</strong>，打开 <strong>「转发应用通知」</strong>。开关应与下图一致；其他转发功能可以保持关闭。</p>
+<figure class="screenshot">
+<a href="/docs-assets/smsforwarder-app-notifications.jpg" target="_blank" aria-label="查看转发应用通知配置大图"><img src="/docs-assets/smsforwarder-app-notifications.jpg" alt="SmsForwarder 通用设置，转发应用通知已开启" loading="lazy" decoding="async"></a>
+<figcaption>通用设置：只需开启「转发应用通知」。<span class="zoom-hint">点击图片查看大图</span></figcaption>
+</figure>
+<div class="warning">如果你跳过了任何权限授予，后续可以在手机「设置」→「应用」→「SmsForwarder」→「权限」中重新开启。</div>
+</div>
+
+<h2>第二步：配置发送通道（Webhook）</h2>
+<div class="card">
+<div class="step-title"><span class="step-num">3</span>进入发送通道</div>
+<p>在 SmsForwarder 主界面，点击底部的 <strong>「发送通道」</strong> 标签。</p>
+<p>然后点击右下角的 <strong>「+」</strong> 按钮添加新通道。</p>
+</div>
+
+<div class="card">
+<div class="step-title"><span class="step-num">4</span>选择 Webhook 类型</div>
+<p>在通道类型列表中，找到并选择 <strong>「Webhook」</strong>（或「网络通知」/「自定义网络」）。</p>
+</div>
+
+<div class="card">
+<div class="step-title"><span class="step-num">5</span>填写 Webhook 配置</div>
+<p>请按照以下参数填写：</p>
+<table style="width:100%;border-collapse:collapse;margin-top:8px">
+<tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650;width:130px">请求方式</td><td style="padding:8px 12px;border:1px solid #dfe4e1"><code>POST</code></td></tr>
+<tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">Webhook URL</td><td style="padding:8px 12px;border:1px solid #dfe4e1"><div class="config-value"><code id="doc-webhook">从当前商户后台获取</code><button class="copy-config" type="button" data-copy-target="doc-webhook" hidden>复制</button></div></td></tr>
+<tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">消息模板</td><td style="padding:8px 12px;border:1px solid #dfe4e1"><code>from=[from]&amp;content=[msg]&amp;title=[title]&amp;timestamp=[timestamp]&amp;sign=[sign]</code></td></tr>
+<tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">签名 Secret</td><td style="padding:8px 12px;border:1px solid #dfe4e1"><div class="config-value"><code id="doc-secret">从当前商户后台获取</code><button class="copy-config" type="button" data-copy-target="doc-secret" hidden>复制</button></div></td></tr>
+<tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">成功应答关键字</td><td style="padding:8px 12px;border:1px solid #dfe4e1">留空</td></tr>
+</table>
+<div id="config-login-note" class="note">请先登录<a href="/admin">当前商户后台</a>，再从后台打开本文档；登录后这里会显示该商户专属的 Webhook URL 和签名 Secret。</div>
+<figure class="screenshot">
+<a href="/docs-assets/admin-smsforwarder-settings.png" target="_blank" aria-label="查看后台 Webhook URL 和签名 Secret 位置大图"><img src="/docs-assets/admin-smsforwarder-settings.png" alt="NewZoe Pay 后台设置页中的 Webhook URL 和签名 Secret" loading="lazy" decoding="async"></a>
+<figcaption>登录当前商户后台，进入「设置」，在红框位置分别复制 Webhook URL 和签名 Secret。<span class="zoom-hint">点击图片查看大图</span></figcaption>
+</figure>
+<p style="margin-top:12px;color:#748079;font-size:13px">提示：消息模板中的方括号占位符需要原样保留。通道名称可以自定义；截图中的「Rick收款测试」只是示例名称。</p>
+<figure class="screenshot">
+<a href="/docs-assets/smsforwarder-webhook.jpg" target="_blank" aria-label="查看 Webhook 配置大图"><img src="/docs-assets/smsforwarder-webhook.jpg" alt="SmsForwarder Webhook 通道配置示例" loading="lazy" decoding="async"></a>
+<figcaption>Webhook 通道：POST、当前商户 URL、消息模板和当前商户 Secret。<span class="zoom-hint">点击图片查看大图</span></figcaption>
+</figure>
+<div class="note">如果你发现 SmsForwarder 版本不同、找不到这些字段，请查看 <a href="#troubleshoot">常见问题</a> 章节。</div>
+</div>
+
+<h2>第三步：配置转发规则</h2>
+<div class="card">
+<div class="step-title"><span class="step-num">6</span>进入规则管理</div>
+<p>在 SmsForwarder 主界面，点击底部的 <strong>「规则」</strong> 标签。</p>
+<p>点击右下角的 <strong>「+」</strong> 按钮添加新规则。</p>
+</div>
+
+<div class="card">
+<div class="step-title"><span class="step-num">7</span>配置规则参数</div>
+<table style="width:100%;border-collapse:collapse;margin-top:8px">
+<tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650;width:130px">匹配字段</td><td style="padding:8px 12px;border:1px solid #dfe4e1">选择 <strong>APP 包名</strong></td></tr>
+<tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">匹配模式</td><td style="padding:8px 12px;border:1px solid #dfe4e1">选择 <strong>是</strong>（精确匹配）</td></tr>
+<tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">匹配的值</td><td style="padding:8px 12px;border:1px solid #dfe4e1"><code>com.tencent.mm</code></td></tr>
+<tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">发送通道</td><td style="padding:8px 12px;border:1px solid #dfe4e1">勾选你在第4步创建的 Webhook 通道</td></tr>
+<tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">启用规则</td><td style="padding:8px 12px;border:1px solid #dfe4e1">打开 <strong>「启用该条转发规则」</strong></td></tr>
+</table>
+<figure class="screenshot">
+<a href="/docs-assets/smsforwarder-wechat-rule.png" target="_blank" aria-label="查看微信通知规则配置大图"><img src="/docs-assets/smsforwarder-wechat-rule.png" alt="SmsForwarder 微信通知转发规则配置示例" loading="lazy" decoding="async"></a>
+<figcaption>通知转发规则：APP 包名精确匹配 <code>com.tencent.mm</code>，并关联刚才创建的 Webhook 通道。<span class="zoom-hint">点击图片查看大图</span></figcaption>
+</figure>
+<div class="note">服务端还会检查通知内容是否包含可信的微信收款标识和订单金额，因此规则只需按 APP 包名精确匹配。</div>
+</div>
+
+<h2>第四步：验证</h2>
+<div class="card">
+<div class="step-title"><span class="step-num">8</span>测试转发</div>
+<p>配置完成后：</p>
+<ol>
+<li>确保 SmsForwarder 在后台运行（不要被系统杀掉）</li>
+<li>先在管理后台创建一笔测试订单，再用另一个微信号按订单显示的金额付款</li>
+<li>收款微信收到通知后，SmsForwarder 应自动转发到服务器</li>
+<li>登录 <a href="/admin" target="_blank">管理后台</a> 查看订单是否自动标记为「已支付」</li>
+</ol>
+<div class="warning"><strong>重要</strong>：部分手机系统会自动杀后台应用。请前往手机「设置」→「应用」→「SmsForwarder」→「电池」中，将电池优化设置为「不优化」，并开启「自启动」权限。</div>
+</div>
+
+<h2 id="troubleshoot">常见问题</h2>
+
+<div class="card">
+<h3>Q: SmsForwarder 收不到微信通知？</h3>
+<p>请检查：</p>
+<ul>
+<li>是否已授予 SmsForwarder <strong>通知读取权限</strong></li>
+<li>微信的通知是否正常弹出（微信设置 → 新消息通知 → 开启）</li>
+<li>SmsForwarder 的后台运行权限和自启动权限是否开启</li>
+<li>尝试重启手机后再次测试</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>Q: 转发了但服务器没反应？</h3>
+<p>请检查：</p>
+<ul>
+<li>Webhook URL 是否填写正确（注意不要多空格）</li>
+<li>手机是否能正常访问外网（用浏览器打开 https://pay.newzoe.cloud 试试）</li>
+<li>消息模板是否完整保留 <code>[from]</code>、<code>[msg]</code>、<code>[title]</code>、<code>[timestamp]</code> 和 <code>[sign]</code></li>
+<li>查看 SmsForwarder 的转发日志，看是否有错误提示</li>
+</ul>
+</div>
+
+<div class="card">
+<h3>Q: 我的 SmsForwarder 界面跟截图不一样？</h3>
+<p>SmsForwarder 更新频繁，界面可能会有差异。核心配置项不变：</p>
+<ul>
+<li><strong>发送通道</strong>：选 Webhook，填 URL，选 POST</li>
+<li><strong>规则</strong>：APP 包名精确匹配 <code>com.tencent.mm</code>，并关联 Webhook 通道</li>
+</ul>
+<p>只要这三步配置正确，就能正常工作。</p>
+</div>
+
+<div class="card">
+<h3>Q: 可以用 iPhone 吗？</h3>
+<p>SmsForwarder 仅支持 Android。iOS 系统限制不允许第三方应用读取其他应用的通知。</p>
+<p>如果你只有 iPhone，建议准备一台便宜的 Android 手机专门用于收款通知转发。</p>
+</div>
+
+<p style="text-align:center;margin-top:40px;color:#8b948f;font-size:12px">NewZoe Pay &copy; 2026 | <a href="/admin">管理后台</a></p>
+</div>
+
+<script>
+document.querySelectorAll("[data-copy-target]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const value = document.getElementById(button.dataset.copyTarget)?.textContent || "";
+    if (!value) return;
+    await navigator.clipboard.writeText(value);
+    button.textContent = "已复制";
+    setTimeout(() => { button.textContent = "复制"; }, 1500);
+  });
+});
+
+(async () => {
+  try {
+    const r = await fetch("/api/admin/smsf-config");
+    if (!r.ok) throw new Error("authentication_required");
+    const d = await r.json();
+    if (!d.webhookUrl || !d.secret) throw new Error("missing_config");
+    document.getElementById("doc-webhook").textContent = d.webhookUrl;
+    document.getElementById("doc-secret").textContent = d.secret;
+    document.querySelectorAll("[data-copy-target]").forEach((button) => { button.hidden = false; });
+    document.getElementById("config-login-note").hidden = true;
+  } catch(e) {}
+})();
+</script>
+</body>
+</html>
