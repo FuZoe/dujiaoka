@@ -8,6 +8,10 @@ COPY docker/supervisor-queue.conf /opt/docker/etc/supervisor.d/laravel-queue.con
 RUN composer install --no-dev --prefer-dist --no-interaction --no-progress --ignore-platform-reqs --optimize-autoloader \
     && mkdir -p storage/app/public storage/framework/cache storage/framework/sessions storage/framework/views storage/logs public/uploads \
     && php artisan admin:publish --assets --force \
+    && test -s public/vendor/dcat-admin/adminlte/adminlte.css \
+    && test -s public/vendor/dcat-admin/dcat/css/dcat-app.css \
+    && test -s public/vendor/dcat-admin/dcat/plugins/vendors.min.js \
+    && test -s public/vendor/dcat-admin/dcat/js/dcat-app.js \
     && touch install.lock \
     && chmod +x /app/docker/entrypoint.sh \
     && chown -R application:application storage public/uploads bootstrap/cache \
