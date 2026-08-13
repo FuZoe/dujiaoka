@@ -38,4 +38,22 @@ return [
         'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
     ],
 
+    'binance_pay' => [
+        'base_url' => env('BINANCE_PAY_BASE_URL', 'https://api.binance.com'),
+        'proxy' => env('BINANCE_PAY_PROXY', 'http://172.19.0.1:17895'),
+        'connect_timeout' => env('BINANCE_PAY_CONNECT_TIMEOUT', 8),
+        'timeout' => env('BINANCE_PAY_TIMEOUT', 20),
+        'recv_window' => env('BINANCE_PAY_RECV_WINDOW', 5000),
+        'poll_interval_seconds' => env('BINANCE_PAY_POLL_INTERVAL_SECONDS', env('BINANCE_PAY_POLL_INTERVAL', 60)),
+        'max_requests_per_poll' => env('BINANCE_PAY_MAX_REQUESTS_PER_POLL', 40),
+        'quote_ttl_minutes' => env('BINANCE_PAY_QUOTE_TTL_MINUTES', 15),
+        'match_time_skew_seconds' => env('BINANCE_PAY_MATCH_TIME_SKEW_SECONDS', 5),
+        'settlement_grace_seconds' => env('BINANCE_PAY_SETTLEMENT_GRACE_SECONDS', 300),
+        'amount_precision' => env('BINANCE_PAY_AMOUNT_PRECISION', 6),
+        'currency' => env('BINANCE_PAY_CURRENCY', 'USDT'),
+        'cny_per_usdt' => env('BINANCE_PAY_CNY_PER_USDT', '7.20000000'),
+        'receive_qr_payload' => env('BINANCE_PAY_QR_URL', 'https://app.binance.com/uni-qr/Sg9jgWUd'),
+        'accepted_order_types' => ['C2C', 'PAY'],
+    ],
+
 ];

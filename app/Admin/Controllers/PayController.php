@@ -10,6 +10,7 @@ use Dcat\Admin\Grid;
 use Dcat\Admin\Show;
 use Dcat\Admin\Http\Controllers\AdminController;
 use App\Models\Pay as PayModel;
+use App\Models\BinancePaySetting;
 
 class PayController extends AdminController
 {
@@ -28,11 +29,15 @@ class PayController extends AdminController
             $grid->column('pay_check');
             $grid->column('pay_method')->select(PayModel::getMethodMap());
             $grid->column('merchant_id')->limit(20);
-            $grid->column('merchant_key')->limit(20);
-            $grid->column('merchant_pem')->limit(20);
             $grid->column('pay_client')->select(PayModel::getClientMap());
             $grid->column('pay_handleroute');
-            $grid->column('is_open')->switch();
+            $grid->column('is_open')->if(function ($column) {
+                return (string) $this->pay_check !== 'binancepay';
+            })->switch()->else()->display(function () {
+                return $this->is_open == PayModel::STATUS_OPEN
+                    ? admin_trans('dujiaoka.status_open')
+                    : admin_trans('dujiaoka.status_close');
+            })->end();
             $grid->column('created_at');
             $grid->column('updated_at')->sortable();
             $grid->disableDeleteButton();
@@ -43,6 +48,16 @@ class PayController extends AdminController
                 $filter->scope(admin_trans('dujiaoka.trashed'))->onlyTrashed();
             });
             $grid->actions(function (Grid\Displayers\Actions $actions) {
+                if ($actions->row->pay_check === 'binancepay') {
+                    $setting = BinancePaySetting::current();
+                    $status = $setting->enabled && $setting->hasSuccessfulConnectionTest()
+                        ? admin_trans('pay.binance.status.ready')
+                        : admin_trans('pay.binance.status.missing');
+                    $actions->append(
+                        '<a href="' . admin_url('binance-pay') . '" class="btn btn-sm btn-primary">'
+                        . '<i class="fa fa-cog"></i> ' . admin_trans('pay.binance.title') . ' (' . $status . ')</a>'
+                    );
+                }
                 if (request('_scope_') == admin_trans('dujiaoka.trashed')) {
                     $actions->append(new Restore(PayModel::class));
                 }
@@ -106,6 +121,37 @@ class PayController extends AdminController
     protected function form()
     {
         return Form::make(new Pay(), function (Form $form) {
+            $isBinancePay = (string) $form->model()->pay_check === 'binancepay';
+            if ($isBinancePay) {
+                $form->html(
+                    '<div class="alert alert-info">'
+                    . admin_trans('pay.binance.description')
+                    . ' <a class="btn btn-sm btn-primary ml-1" href="' . admin_url('binance-pay') . '">'
+                    . admin_trans('pay.binance.title') . '</a></div>'
+                );
+                $form->display('id');
+                $form->display('pay_name');
+                $form->display('merchant_id');
+                $form->display('pay_check');
+                $form->display('pay_client');
+                $form->display('pay_method');
+                $form->display('pay_handleroute');
+                $form->display('is_open', admin_trans('pay.fields.is_open'))->customFormat(function ($value) {
+                    return (int) $value === PayModel::STATUS_OPEN
+                        ? admin_trans('dujiaoka.status_open')
+                        : admin_trans('dujiaoka.status_close');
+                });
+                $form->display('created_at');
+                $form->display('updated_at');
+                // Ignore forged POST fields too; this record is maintained by BinancePaySettingForm.
+                $form->ignore([
+                    'pay_name', 'merchant_id', 'merchant_key', 'merchant_pem', 'pay_check',
+                    'pay_client', 'pay_method', 'pay_handleroute', 'is_open',
+                ]);
+                $form->disableDeleteButton();
+                return;
+            }
+
             $form->display('id');
             $form->text('pay_name')->required();
             $form->text('merchant_id')->required();
@@ -121,7 +167,9 @@ class PayController extends AdminController
                 ->default(PayModel::METHOD_JUMP)
                 ->required();
             $form->text('pay_handleroute')->required();
-            $form->switch('is_open')->default(PayModel::STATUS_OPEN);
+            if (!$isBinancePay) {
+                $form->switch('is_open')->default(PayModel::STATUS_OPEN);
+            }
             $form->display('created_at');
             $form->display('updated_at');
             $form->disableDeleteButton();

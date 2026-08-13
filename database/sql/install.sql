@@ -496,6 +496,7 @@ INSERT INTO `pays` VALUES (32,'MATIC', 'tokenpay-matic', 1, 3, 'EVM_Polygon_MATI
 INSERT INTO `pays` VALUES (33,'USDT-Polygon', 'tokenpay-usdt-polygon', 1, 3, 'EVM_Polygon_USDT_ERC20', '你的API密钥', 'https://token-pay.xxx.com', 'pay/tokenpay', 1, now(), now(), NULL);
 INSERT INTO `pays` VALUES (34,'USDC-Polygon', 'tokenpay-usdc-polygon', 1, 3, 'EVM_Polygon_USDC_ERC20', '你的API密钥', 'https://token-pay.xxx.com', 'pay/tokenpay', 1, now(), now(), NULL);
 INSERT INTO `pays` (`pay_name`, `pay_check`, `pay_method`, `pay_client`, `merchant_id`, `merchant_key`, `merchant_pem`, `pay_handleroute`, `is_open`, `created_at`, `updated_at`) VALUES ('微信支付', 'newzoe-wechat', 1, 3, 'https://pay.newzoe.cloud', '', '由环境变量 NEWZOE_PAY_SECRET 提供', '/pay/newzoe', 1, now(), now());
+INSERT INTO `pays` (`pay_name`, `pay_check`, `pay_method`, `pay_client`, `merchant_id`, `merchant_key`, `merchant_pem`, `pay_handleroute`, `is_open`, `created_at`, `updated_at`) VALUES ('币安支付', 'binancepay', 1, 3, 'Binance Pay', '', '由币安支付专用配置提供', '/pay/binance', 0, now(), now());
 
 -- ----------------------------
 COMMIT;

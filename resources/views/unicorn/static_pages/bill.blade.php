@@ -26,7 +26,7 @@
                 </div>
             @endif
             <a class="primary-action" href="{{ url('pay-gateway', ['handle' => urlencode($pay['pay_handleroute']), 'payway' => $pay['pay_check'], 'orderSN' => $order_sn]) }}">
-                前往微信支付 <span aria-hidden="true">&#8594;</span>
+                {{ $pay['pay_check'] === 'binancepay' ? '前往币安支付' : '前往微信支付' }} <span aria-hidden="true">&#8594;</span>
             </a>
             <p class="checkout-note">支付链接与本订单绑定，请核对金额后完成付款</p>
         </section>

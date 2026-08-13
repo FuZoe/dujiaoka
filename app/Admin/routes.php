@@ -18,6 +18,9 @@ Route::group([
     $router->resource('coupon', 'CouponController');
     $router->resource('emailtpl', 'EmailtplController');
     $router->resource('pay', 'PayController');
+    $router->get('binance-pay', 'BinancePaySettingController@index');
+    $router->post('binance-pay', 'BinancePaySettingController@index');
+    $router->post('binance-pay/test', 'BinancePaySettingController@test');
     $router->resource('order', 'OrderController');
     $router->get('import-carmis', 'CarmisController@importCarmis');
     $router->get('system-setting', 'SystemSettingController@systemSetting');

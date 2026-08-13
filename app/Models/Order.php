@@ -153,4 +153,9 @@ class Order extends BaseModel
         return $this->hasMany(TelegramOrderNotification::class, 'order_id');
     }
 
+    public function binancePayAttempts()
+    {
+        return $this->hasMany(BinancePayAttempt::class, 'order_id');
+    }
+
 }

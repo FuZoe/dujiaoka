@@ -15,6 +15,9 @@ Route::group(['prefix' => 'pay', 'namespace' => 'Pay', 'middleware' => ['dujiaok
     // NewZoe 微信收款通知
     Route::get('newzoe/{payway}/{orderSN}', 'NewzoePayController@gateway');
     Route::post('newzoe/notify_url', 'NewzoePayController@notifyUrl');
+    // Binance Pay personal receive QR
+    Route::get('binance/status/{orderSN}', 'BinancePayController@status');
+    Route::get('binance/{payway}/{orderSN}', 'BinancePayController@gateway');
     // 支付宝
     Route::get('alipay/{payway}/{orderSN}', 'AlipayController@gateway');
     Route::post('alipay/notify_url', 'AlipayController@notifyUrl');

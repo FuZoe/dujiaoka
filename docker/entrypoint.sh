@@ -29,6 +29,7 @@ until php artisan newzoe:bootstrap; do
 done
 
 php artisan migrate --force
+php artisan newzoe:bootstrap
 php artisan view:clear
 php artisan route:clear
 exec supervisord

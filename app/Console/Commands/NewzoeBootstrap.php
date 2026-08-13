@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
+use App\Models\BinancePaySetting;
 
 class NewzoeBootstrap extends Command
 {
@@ -15,30 +16,43 @@ class NewzoeBootstrap extends Command
 
     public function handle()
     {
-        if (!Schema::hasTable('orders')) {
+        $freshInstall = !Schema::hasTable('orders');
+        if ($freshInstall) {
             $this->info('Importing the base database schema...');
             DB::unprepared(file_get_contents(database_path('sql/install.sql')));
         }
 
-        $password = (string) env('SHOP_ADMIN_PASSWORD', '');
-        if (strlen($password) < 16) {
-            $this->error('SHOP_ADMIN_PASSWORD must contain at least 16 characters.');
-            return 1;
+        if ($freshInstall) {
+            $password = (string) env('SHOP_ADMIN_PASSWORD', '');
+            if (strlen($password) < 16) {
+                $this->error('SHOP_ADMIN_PASSWORD must contain at least 16 characters.');
+                return 1;
+            }
+
+            DB::table('admin_users')->where('username', 'admin')->update([
+                'name' => 'NewZoe Administrator',
+                'password' => Hash::make($password),
+                'updated_at' => now(),
+            ]);
+
+            DB::table('pays')->whereNotIn('pay_check', ['newzoe-wechat', 'binancepay'])->update(['is_open' => 0]);
+            DB::table('pays')->where('pay_check', 'newzoe-wechat')->update([
+                'is_open' => 1,
+                'pay_client' => 3,
+                'pay_handleroute' => '/pay/newzoe',
+                'updated_at' => now(),
+            ]);
         }
-
-        DB::table('admin_users')->where('username', 'admin')->update([
-            'name' => 'NewZoe Administrator',
-            'password' => Hash::make($password),
-            'updated_at' => now(),
-        ]);
-
-        DB::table('pays')->where('pay_check', '!=', 'newzoe-wechat')->update(['is_open' => 0]);
-        DB::table('pays')->where('pay_check', 'newzoe-wechat')->update([
-            'is_open' => 1,
-            'pay_client' => 3,
-            'pay_handleroute' => '/pay/newzoe',
-            'updated_at' => now(),
-        ]);
+        if (Schema::hasTable('binance_pay_settings')) {
+            $binanceSetting = BinancePaySetting::current();
+            $binanceEnabled = $binanceSetting->isReady();
+            DB::table('pays')->where('pay_check', 'binancepay')->update([
+                'is_open' => $binanceEnabled ? 1 : 0,
+                'pay_client' => 3,
+                'pay_handleroute' => '/pay/binance',
+                'updated_at' => now(),
+            ]);
+        }
 
         $defaultSettings = [
             'title' => 'NewZoe 数字商店',
@@ -69,7 +83,7 @@ class NewzoeBootstrap extends Command
             array_merge($defaultSettings, is_array($savedSettings) ? $savedSettings : [])
         );
 
-        if (filter_var(env('NEWZOE_CREATE_DEMO', true), FILTER_VALIDATE_BOOLEAN)) {
+        if ($freshInstall && filter_var(env('NEWZOE_CREATE_DEMO', true), FILTER_VALIDATE_BOOLEAN)) {
             $this->createDemoProduct();
         }
 
