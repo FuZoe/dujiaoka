@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Customer;
+use App\Models\TelegramBinding;
 use Illuminate\Support\Facades\Hash;
 use App\Http\Middleware\DujiaoBoot;
 use Tests\Support\BuildsTelegramTables;
@@ -48,5 +49,35 @@ class CustomerAccountTest extends TestCase
             'email' => 'missing@example.test',
             'password' => 'incorrect-password',
         ])->assertStatus(429);
+    }
+
+    public function test_telegram_binding_redirects_with_notice_when_bot_username_is_missing(): void
+    {
+        config(['services.telegram.bot_username' => ' @ ']);
+        $customer = Customer::query()->create([
+            'email' => 'binding-unavailable@example.test',
+            'password' => bcrypt('test-password'),
+        ]);
+
+        $response = $this->actingAs($customer)->get('/account/telegram/bind');
+
+        $response->assertRedirect('/account');
+        $response->assertSessionHas('status', 'Telegram 绑定服务正在配置中，请稍后再试。');
+        $this->assertSame(0, TelegramBinding::query()->count());
+    }
+
+    public function test_telegram_binding_page_uses_configured_bot_username(): void
+    {
+        config(['services.telegram.bot_username' => '@newzoe_order_bot']);
+        $customer = Customer::query()->create([
+            'email' => 'binding-ready@example.test',
+            'password' => bcrypt('test-password'),
+        ]);
+
+        $response = $this->actingAs($customer)->get('/account/telegram/bind');
+
+        $response->assertOk();
+        $response->assertSee('https://t.me/newzoe_order_bot?start=bind_', false);
+        $this->assertSame(1, TelegramBinding::query()->count());
     }
 }

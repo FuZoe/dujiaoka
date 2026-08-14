@@ -13,7 +13,8 @@ class TelegramBindingController extends BaseController
     {
         $username = ltrim(trim((string) config('services.telegram.bot_username')), '@');
         if ($username === '') {
-            abort(503, 'Telegram bot username is not configured.');
+            return redirect()->route('account')
+                ->with('status', 'Telegram 绑定服务正在配置中，请稍后再试。');
         }
 
         [$binding, $token] = $bindings->issue($request->user());
