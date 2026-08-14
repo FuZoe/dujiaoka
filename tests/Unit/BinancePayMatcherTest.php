@@ -265,6 +265,40 @@ class BinancePayMatcherTest extends TestCase
         $this->assertSame(Order::STATUS_PROCESSING, (int) $order->fresh()->status);
     }
 
+    public function test_processing_order_keeps_an_expiry_check_after_settlement_deadline(): void
+    {
+        $now = Carbon::parse('2026-08-14 09:45:03');
+        Carbon::setTestNow($now);
+        Queue::fake();
+        config([
+            'services.binance_pay.settlement_grace_seconds' => 300,
+            'services.binance_pay.poll_interval_seconds' => 60,
+        ]);
+
+        try {
+            $order = $this->order('BINANCEORDER018', '0.01', Order::STATUS_PROCESSING);
+            $attempt = $this->attempt(
+                $order,
+                '0.00147300',
+                $now->copy()->subMinutes(11),
+                $now->copy()->subMinutes(6)->subSecond()
+            );
+            $attempt->status = BinancePayAttempt::STATUS_PROCESSING;
+            $attempt->save();
+
+            (new OrderExpired($order->order_sn))->handle();
+
+            $this->assertSame(Order::STATUS_PROCESSING, (int) $order->fresh()->status);
+            Queue::assertPushed(OrderExpired::class, function (OrderExpired $job) use ($now) {
+                return $job->delay instanceof Carbon
+                    && $job->delay->equalTo($now->copy()->addMinute());
+            });
+            Queue::assertNotPushed(CouponBack::class);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     public function test_fulfilment_failure_releases_claim_for_retry(): void
     {
         $now = Carbon::now();

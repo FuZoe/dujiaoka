@@ -56,14 +56,15 @@ class OrderExpired implements ShouldQueue
     {
         // 如果x分钟后还没支付就算过期
         $order = Order::query()->where('order_sn', $this->orderSN)->first();
-        if ($order && $order->status == Order::STATUS_WAIT_PAY) {
-            if ($this->deferForBinanceSettlement($order)) {
-                return;
-            }
-            if (app('Service\OrderService')->expiredOrderSN($this->orderSN)) {
-                // 回退优惠券
-                CouponBack::dispatch($order);
-            }
+        if (!$order || $this->deferForBinanceSettlement($order)) {
+            return;
+        }
+        if ((int) $order->status !== Order::STATUS_WAIT_PAY) {
+            return;
+        }
+        if (app('Service\OrderService')->expiredOrderSN($this->orderSN)) {
+            // 回退优惠券
+            CouponBack::dispatch($order);
         }
     }
 
@@ -86,6 +87,15 @@ class OrderExpired implements ShouldQueue
         $settlementDeadline = $attempt->expires_at->copy()
             ->addSeconds($graceSeconds + $pollBufferSeconds);
         if ($settlementDeadline->lte(Carbon::now())) {
+            // A failed fulfilment can leave the order PROCESSING while the
+            // matcher rolls the attempt back. Keep one recovery check queued.
+            if ((int) $order->status === Order::STATUS_PROCESSING) {
+                self::dispatch($this->orderSN)
+                    ->delay(Carbon::now()->addSeconds($pollBufferSeconds));
+
+                return true;
+            }
+
             return false;
         }
 
