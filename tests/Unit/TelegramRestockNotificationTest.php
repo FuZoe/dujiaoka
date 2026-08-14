@@ -51,4 +51,20 @@ class TelegramRestockNotificationTest extends TestCase
 
         (new TelegramRestockNotification('private-target-batch', 42, 'message'))->handle($client);
     }
+
+    public function test_channel_link_target_is_normalized_before_sending(): void
+    {
+        Cache::forever('system-setting', [
+            'is_open_telegram_restock' => 1,
+            'telegram_bot_token' => 'TOKEN',
+            'telegram_userid' => 't.me/zoebuhuo',
+        ]);
+        $client = Mockery::mock(TelegramBotClient::class);
+        $client->shouldReceive('sendMessage')
+            ->once()
+            ->with('TOKEN', '@zoebuhuo', 'message')
+            ->andReturn(103);
+
+        (new TelegramRestockNotification('channel-link-batch', 42, 'message'))->handle($client);
+    }
 }

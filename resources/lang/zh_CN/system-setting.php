@@ -68,7 +68,7 @@ return [
         'is_open_telegram_restock' => '批量导入卡密使库存增加时发送，每个导入批次最多一条。',
         'is_open_telegram_customer_order' => '仅向已绑定账户对应的 Telegram 私聊发送该顾客自己的订单事件；目标频道始终只接收补货公告。',
         'telegram_send_order_cards' => '开启后，自动发货完成通知会包含卡密；关闭后仅发送状态和受保护的订单链接。',
-        'telegram_channel' => '目标可填写：1. 公开频道的 @channel_username（包含 @）；2. 私有频道的 -100 开头 chat_id（先将机器人设为频道管理员并授予发布权限）；3. 管理员私聊 chat_id（正数）。频道 ID 可通过 Bot API 的 channel_post.chat.id 获取。',
+        'telegram_channel' => '目标可填写：1. 公开频道的 @channel_username 或 t.me/channel_username；2. 私有频道的 -100 开头 chat_id（先将机器人设为频道管理员并授予发布权限）；3. 管理员私聊 chat_id（正数）。频道 ID 可通过 Bot API 的 channel_post.chat.id 获取。',
     ],
     'rule_messages' => [
         'save_system_setting_success' => '系统配置保存成功！',

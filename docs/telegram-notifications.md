@@ -10,7 +10,7 @@
 
 1. 在 Telegram 打开目标频道的管理员设置，把机器人添加为管理员。
 2. 至少授予机器人“发布消息”权限。
-3. 公开频道在后台 `系统设置 -> 订单推送配置 -> Telegram补货目标` 填写完整用户名，例如 `@channel_username`。
+3. 公开频道在后台 `系统设置 -> 订单推送配置 -> Telegram补货目标` 填写 `@channel_username`，也可以直接粘贴 `t.me/channel_username` 或 `https://t.me/channel_username`。
 4. 私有频道填写字符串形式的数值 chat_id，通常以 `-100` 开头，例如 `-1001234567890`。机器人必须是频道管理员并拥有发布权限。
 5. 如果暂时没有频道，也可以填写管理员私聊的正数 chat_id；补货公告会发到该私聊。这个值不能接收频道广播。
 6. 获取私有频道 ID 时，可先让机器人收到频道消息，再调用 Bot API `getUpdates`，查找 `channel_post.chat.id`；也可把频道消息转发给可显示原始 chat_id 的工具机器人。

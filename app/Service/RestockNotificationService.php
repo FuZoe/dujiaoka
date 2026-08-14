@@ -11,6 +11,24 @@ use Throwable;
 
 class RestockNotificationService
 {
+    public static function normalizeTarget(string $target): string
+    {
+        $target = trim($target);
+        if (preg_match('#^(?:https?://)?t\.me/([A-Za-z][A-Za-z0-9_]{4,31})/?$#i', $target, $matches)) {
+            return '@'.$matches[1];
+        }
+
+        return $target;
+    }
+
+    public static function isValidTarget(string $target): bool
+    {
+        return preg_match(
+            '/^(?:@[A-Za-z][A-Za-z0-9_]{4,31}|-100[0-9]{6,}|[1-9][0-9]{0,14})$/',
+            self::normalizeTarget($target)
+        ) === 1;
+    }
+
     public function dispatchForImport(
         Goods $goods,
         int $stockBefore,
@@ -88,9 +106,7 @@ class RestockNotificationService
 
     private function hasTelegramConfiguration(): bool
     {
-        $target = trim((string) dujiaoka_config_get('telegram_userid'));
-
         return trim((string) dujiaoka_config_get('telegram_bot_token')) !== ''
-            && preg_match('/^(?:@[A-Za-z][A-Za-z0-9_]{4,31}|-100[0-9]{6,}|[1-9][0-9]{0,14})$/', $target) === 1;
+            && self::isValidTarget((string) dujiaoka_config_get('telegram_userid'));
     }
 }

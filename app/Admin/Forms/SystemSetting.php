@@ -3,6 +3,7 @@
 namespace App\Admin\Forms;
 
 use App\Models\BaseModel;
+use App\Service\RestockNotificationService;
 use Dcat\Admin\Widgets\Form;
 use Illuminate\Support\Facades\Cache;
 
@@ -61,7 +62,15 @@ class SystemSetting extends Form
             $this->text('server_jiang_token', admin_trans('system-setting.fields.server_jiang_token'));
             $this->text('telegram_bot_token', admin_trans('system-setting.fields.telegram_bot_token'));
             $this->text('telegram_userid', admin_trans('system-setting.fields.telegram_userid'))
-                ->rules(['nullable', 'regex:/^(?:@[A-Za-z][A-Za-z0-9_]{4,31}|-100[0-9]{6,}|[1-9][0-9]{0,14})$/'])
+                ->rules(['nullable', function ($attribute, $value, $fail) {
+                    if (trim((string) $value) === '') {
+                        return;
+                    }
+
+                    if (!RestockNotificationService::isValidTarget((string) $value)) {
+                        $fail('请输入 @频道用户名、t.me/频道用户名、-100 开头的频道 ID 或正数私聊 ID。');
+                    }
+                }])
                 ->help(admin_trans('system-setting.helps.telegram_channel'));
             $this->switch('is_open_telegram_restock', admin_trans('system-setting.fields.is_open_telegram_restock'))
                 ->default(BaseModel::STATUS_CLOSE)

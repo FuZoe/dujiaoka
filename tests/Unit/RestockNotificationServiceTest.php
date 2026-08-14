@@ -121,6 +121,22 @@ class RestockNotificationServiceTest extends TestCase
         $this->assertStringContainsString('https://shop.example.test/buy/42', $message);
     }
 
+    /** @dataProvider telegramTargetAliases */
+    public function test_it_normalizes_telegram_channel_links(string $input, string $expected): void
+    {
+        $this->assertSame($expected, RestockNotificationService::normalizeTarget($input));
+        $this->assertTrue(RestockNotificationService::isValidTarget($input));
+    }
+
+    public function telegramTargetAliases(): array
+    {
+        return [
+            'username' => ['@zoebuhuo', '@zoebuhuo'],
+            'short link' => ['t.me/zoebuhuo', '@zoebuhuo'],
+            'https link' => ['https://t.me/zoebuhuo/', '@zoebuhuo'],
+        ];
+    }
+
     private function goods(): Goods
     {
         $goods = new Goods();

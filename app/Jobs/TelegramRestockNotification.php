@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Service\TelegramBotClient;
+use App\Service\RestockNotificationService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -50,8 +51,10 @@ class TelegramRestockNotification implements ShouldQueue
 
     public function handle(TelegramBotClient $client): void
     {
-        $target = trim((string) dujiaoka_config_get('telegram_userid'));
-        if (preg_match('/^(?:@[A-Za-z][A-Za-z0-9_]{4,31}|-100[0-9]{6,}|[1-9][0-9]{0,14})$/', $target) !== 1) {
+        $target = RestockNotificationService::normalizeTarget(
+            (string) dujiaoka_config_get('telegram_userid')
+        );
+        if (!RestockNotificationService::isValidTarget($target)) {
             throw new RuntimeException('Telegram restock target is invalid.');
         }
 

@@ -59,7 +59,7 @@ return [
         'is_open_telegram_restock' => '批量匯入卡密使庫存增加時發送，每個匯入批次最多一條。',
         'is_open_telegram_customer_order' => '僅向已綁定帳戶對應的 Telegram 私聊發送該顧客自己的訂單事件；目標頻道始終只接收補貨公告。',
         'telegram_send_order_cards' => '開啟後，自動發貨完成通知會包含卡密；關閉後僅發送狀態和受保護的訂單連結。',
-        'telegram_channel' => '目標可填寫：1. 公開頻道的 @channel_username（包含 @）；2. 私人頻道的 -100 開頭 chat_id（先將機器人設為頻道管理員並授予發佈權限）；3. 管理員私聊 chat_id（正數）。頻道 ID 可透過 Bot API 的 channel_post.chat.id 取得。',
+        'telegram_channel' => '目標可填寫：1. 公開頻道的 @channel_username 或 t.me/channel_username；2. 私人頻道的 -100 開頭 chat_id（先將機器人設為頻道管理員並授予發佈權限）；3. 管理員私聊 chat_id（正數）。頻道 ID 可透過 Bot API 的 channel_post.chat.id 取得。',
     ],
     'rule_messages' => [
         'save_system_setting_success' => '系統配置套用成功！',
