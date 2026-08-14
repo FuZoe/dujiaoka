@@ -124,12 +124,16 @@ a:hover { color: inherit; }
 .payment-option { min-height: 52px; display: grid; grid-template-columns: 32px 1fr 18px; align-items: center; gap: 10px; position: relative; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; cursor: pointer; }
 .payment-option:has(input:checked) { border-color: var(--green); box-shadow: 0 0 0 2px rgba(7, 143, 73, .08); }
 .payment-option input { position: absolute; opacity: 0; pointer-events: none; }
-.wechat-mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; background: #08aa57; color: #fff; font-size: 12px; font-weight: 800; }
+.payment-mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; font-size: 12px; font-weight: 800; }
+.wechat-mark { background: #08aa57; color: #fff; }
+.binance-mark { background: #f0b90b; color: #181a20; font-size: 14px; }
+.payment-option.binance-option:has(input:checked) { border-color: #c99400; box-shadow: 0 0 0 2px rgba(240, 185, 11, .14); }
 .payment-option > span:nth-child(3) { display: flex; min-width: 0; flex-direction: column; }
 .payment-option strong { color: var(--ink); font-size: 13px; }
 .payment-option small { color: var(--muted); font-size: 11px; font-weight: 500; }
 .payment-option i { width: 17px; height: 17px; border: 1px solid #aeb8b2; border-radius: 50%; }
 .payment-option input:checked ~ i { border: 5px solid var(--green); }
+.payment-option.binance-option input:checked ~ i { border-color: #f0b90b; }
 .checkout-total { display: flex; align-items: flex-end; justify-content: space-between; border-top: 1px solid var(--line); margin-top: 18px; padding-top: 16px; }
 .checkout-total span { color: var(--muted); }
 .checkout-total strong { color: var(--red); font-size: 26px; font-weight: 780; font-variant-numeric: tabular-nums; }

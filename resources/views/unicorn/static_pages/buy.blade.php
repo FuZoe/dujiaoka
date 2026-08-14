@@ -101,9 +101,13 @@
                         <fieldset class="payment-options">
                             <legend>支付方式</legend>
                             @forelse($payways as $index => $way)
-                                <label class="payment-option">
+                                <label class="payment-option @if(($way['pay_check'] ?? '') === 'binancepay') binance-option @endif">
                                     <input type="radio" name="payway" value="{{ $way['id'] }}" @if($index == 0) checked @endif>
-                                    <span class="wechat-mark">微</span>
+                                    @if(($way['pay_check'] ?? '') === 'binancepay')
+                                        <span class="payment-mark binance-mark">币</span>
+                                    @else
+                                        <span class="payment-mark wechat-mark">微</span>
+                                    @endif
                                     <span><strong>{{ $way['pay_name'] }}</strong><small>支付后自动确认</small></span>
                                     <i aria-hidden="true"></i>
                                 </label>
