@@ -400,6 +400,47 @@ class BinancePayMatcherTest extends TestCase
         $this->assertSame(BinancePayAttempt::STATUS_EXPIRED, $attempt->fresh()->status);
     }
 
+    public function test_recycled_amount_matches_the_current_attempt_not_historical_attempt(): void
+    {
+        $now = Carbon::now();
+        config([
+            'services.binance_pay.settlement_grace_seconds' => 300,
+            'services.binance_pay.poll_interval_seconds' => 60,
+        ]);
+        $this->readySetting();
+        $historicalOrder = $this->order('BINANCEORDER026', '9.90', Order::STATUS_EXPIRED);
+        $historicalAttempt = $this->attempt(
+            $historicalOrder,
+            '1.38000000',
+            $now->copy()->subMinutes(12),
+            $now->copy()->subMinutes(7)
+        );
+        $historicalAttempt->status = BinancePayAttempt::STATUS_EXPIRED;
+        $historicalAttempt->save();
+        $currentOrder = $this->order('BINANCEORDER027', '9.90');
+        $currentAttempt = $this->attempt(
+            $currentOrder,
+            '1.38000000',
+            $now->copy()->subMinute(),
+            $now->copy()->addMinutes(4)
+        );
+
+        $client = Mockery::mock(BinancePayClient::class);
+        $client->shouldReceive('transactions')->once()->andReturn([
+            $this->transaction('TX_RECYCLED_AMOUNT', '1.38000000', $now),
+        ]);
+        $orders = Mockery::mock(OrderProcessService::class);
+        $orders->shouldReceive('completedOrder')->once()->withArgs(function ($orderSn) {
+            return $orderSn === 'BINANCEORDER027';
+        });
+
+        $result = (new BinancePayMatcher($client, $orders))->poll();
+
+        $this->assertSame(1, $result['matched']);
+        $this->assertSame(BinancePayAttempt::STATUS_EXPIRED, $historicalAttempt->fresh()->status);
+        $this->assertSame(BinancePayAttempt::STATUS_PAID, $currentAttempt->fresh()->status);
+    }
+
     public function test_full_page_at_one_timestamp_fails_instead_of_silently_skipping_rows(): void
     {
         $this->readySetting();

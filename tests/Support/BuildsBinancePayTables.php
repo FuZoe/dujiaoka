@@ -56,7 +56,10 @@ trait BuildsBinancePayTables
             $table->longText('raw_transaction')->nullable();
             $table->text('last_error')->nullable();
             $table->timestamps();
-            $table->unique(['currency', 'quoted_amount']);
+            $table->index(
+                ['currency', 'quoted_amount', 'expires_at'],
+                'binance_attempt_amount_window_idx'
+            );
         });
     }
 }

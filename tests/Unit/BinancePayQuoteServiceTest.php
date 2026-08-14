@@ -23,6 +23,8 @@ class BinancePayQuoteServiceTest extends TestCase
         config([
             'services.binance_pay.currency' => 'USDT',
             'services.binance_pay.quote_ttl_minutes' => 15,
+            'services.binance_pay.settlement_grace_seconds' => 300,
+            'services.binance_pay.poll_interval_seconds' => 60,
         ]);
 
         $setting = new BinancePaySetting([
@@ -59,6 +61,31 @@ class BinancePayQuoteServiceTest extends TestCase
         $this->assertSame('0.14', $quote->expected_usdt);
     }
 
+    public function test_one_fen_order_rounds_to_one_usdt_cent_at_the_current_rate(): void
+    {
+        $setting = BinancePaySetting::query()->findOrFail(1);
+        $setting->cny_per_usdt = '6.80000000';
+        $setting->save();
+
+        $quote = (new BinancePayQuoteService())->quote($this->order('BINANCEORDER028', '0.01'));
+
+        $this->assertSame('0.01', $quote->expected_usdt);
+    }
+
+    public function test_two_live_one_fen_orders_receive_distinct_cent_amounts(): void
+    {
+        $setting = BinancePaySetting::query()->findOrFail(1);
+        $setting->cny_per_usdt = '6.80000000';
+        $setting->save();
+        $quotes = new BinancePayQuoteService();
+
+        $first = $quotes->quote($this->order('BINANCEORDER029', '0.01'));
+        $second = $quotes->quote($this->order('BINANCEORDER030', '0.01'));
+
+        $this->assertSame('0.01', $first->expected_usdt);
+        $this->assertSame('0.02', $second->expected_usdt);
+    }
+
     public function test_whole_cent_quotes_keep_two_decimal_places(): void
     {
         $quote = (new BinancePayQuoteService())->quote($this->order('BINANCEORDER020', '1.44'));
@@ -82,6 +109,68 @@ class BinancePayQuoteServiceTest extends TestCase
         $attempt = new BinancePayAttempt(['quoted_amount' => '0.00147100']);
 
         $this->assertSame('0.001471', $attempt->expected_usdt);
+    }
+
+    public function test_expired_quote_amount_is_reused_after_the_settlement_window(): void
+    {
+        $now = Carbon::parse('2026-08-14 11:40:00');
+        Carbon::setTestNow($now);
+
+        try {
+            $quotes = new BinancePayQuoteService();
+            $first = $quotes->quote($this->order('BINANCEORDER022', '9.90'));
+            $first->status = BinancePayAttempt::STATUS_EXPIRED;
+            $first->expires_at = $now->copy()->subMinutes(6)->subSecond();
+            $first->save();
+
+            $reused = $quotes->quote($this->order('BINANCEORDER023', '9.90'));
+
+            $this->assertSame('1.38', $first->expected_usdt);
+            $this->assertSame('1.38', $reused->expected_usdt);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_any_quote_status_releases_its_amount_after_the_settlement_window(): void
+    {
+        $now = Carbon::parse('2026-08-14 11:40:00');
+        Carbon::setTestNow($now);
+
+        try {
+            $quotes = new BinancePayQuoteService();
+            $first = $quotes->quote($this->order('BINANCEORDER024', '9.90'));
+            $first->expires_at = $now->copy()->subMinutes(6)->subSecond();
+            $first->save();
+
+            $second = $quotes->quote($this->order('BINANCEORDER025', '9.90'));
+
+            $this->assertSame('1.38', $first->expected_usdt);
+            $this->assertSame('1.38', $second->expected_usdt);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_terminal_quote_keeps_its_amount_reserved_inside_the_settlement_window(): void
+    {
+        $now = Carbon::parse('2026-08-14 11:40:00');
+        Carbon::setTestNow($now);
+
+        try {
+            $quotes = new BinancePayQuoteService();
+            $first = $quotes->quote($this->order('BINANCEORDER031', '9.90'));
+            $first->status = BinancePayAttempt::STATUS_PAID;
+            $first->expires_at = $now->copy()->subMinutes(5);
+            $first->save();
+
+            $second = $quotes->quote($this->order('BINANCEORDER032', '9.90'));
+
+            $this->assertSame('1.38', $first->expected_usdt);
+            $this->assertSame('1.39', $second->expected_usdt);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_official_receive_url_and_current_credentials_are_required(): void

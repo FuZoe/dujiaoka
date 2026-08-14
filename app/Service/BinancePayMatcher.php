@@ -184,12 +184,16 @@ class BinancePayMatcher
         $currency = strtoupper((string) $transaction['currency']);
         $amount = bcadd((string) $transaction['amount'], '0', 8);
         $paidAt = Carbon::createFromTimestampMs((int) $transaction['transactionTime']);
+        $graceSeconds = max(60, (int) config('services.binance_pay.settlement_grace_seconds', 300));
+        $oldestEligibleExpiry = $paidAt->copy()->subSeconds($graceSeconds);
 
         return BinancePayAttempt::query()
             ->whereIn('status', [BinancePayAttempt::STATUS_PENDING, BinancePayAttempt::STATUS_EXPIRED])
             ->where('currency', $currency)
             ->where('quoted_amount', $amount)
             ->where('activated_at', '<=', $paidAt->copy()->addSeconds($skewSeconds))
+            ->where('expires_at', '>=', $oldestEligibleExpiry)
+            ->latest('activated_at')
             ->first();
     }
 

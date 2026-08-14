@@ -18,8 +18,13 @@ class BinancePayQuoteService
         BinancePaySetting::current();
 
         return DB::transaction(function () use ($order) {
-            $now = Carbon::now();
+            // Serialize allocation before reading any candidate amount. A
+            // no-op write also provides a real mutex under SQLite tests.
+            DB::table('binance_pay_settings')
+                ->where('id', 1)
+                ->update(['id' => DB::raw('id')]);
             $setting = BinancePaySetting::query()->lockForUpdate()->findOrFail(1);
+            $now = Carbon::now();
             if (!$setting->isReady()) {
                 throw new RuntimeException('Binance Pay is not configured and tested.');
             }
@@ -44,10 +49,7 @@ class BinancePayQuoteService
             $candidateUnits = $this->ceilQuoteUnits((string) $lockedOrder->actual_price, $rate, $precision);
             $quotedAmount = $this->formatUnits($candidateUnits, $precision);
             $attempts = 0;
-            while (BinancePayAttempt::query()
-                ->where('currency', $currency)
-                ->where('quoted_amount', $quotedAmount)
-                ->exists()) {
+            while ($this->amountIsReserved($currency, $quotedAmount, $now)) {
                 $candidateUnits = bcadd($candidateUnits, '1', 0);
                 $quotedAmount = $this->formatUnits($candidateUnits, $precision);
                 if (++$attempts > 100000) {
@@ -78,6 +80,18 @@ class BinancePayQuoteService
                 'expires_at' => $expiresAt,
             ]);
         }, 3);
+    }
+
+    private function amountIsReserved(string $currency, string $quotedAmount, Carbon $now): bool
+    {
+        $graceSeconds = max(60, (int) config('services.binance_pay.settlement_grace_seconds', 300));
+        $reuseCutoff = $now->copy()->subSeconds($graceSeconds);
+
+        return BinancePayAttempt::query()
+            ->where('currency', $currency)
+            ->where('quoted_amount', $quotedAmount)
+            ->where('expires_at', '>=', $reuseCutoff)
+            ->exists();
     }
 
     private function ceilQuoteUnits(string $amount, string $rate, int $precision): string
