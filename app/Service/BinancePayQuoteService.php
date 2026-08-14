@@ -52,12 +52,12 @@ class BinancePayQuoteService
             }
 
             $shopExpiry = ($lockedOrder->created_at ?: $now)->copy()
-                ->addMinutes(max(5, (int) dujiaoka_config_get('order_expire_time', 15)));
-            $settlementGrace = max(60, (int) config('services.binance_pay.settlement_grace_seconds', 300));
-            $latestExpiry = $shopExpiry->copy()->subSeconds($settlementGrace);
+                ->addMinutes(max(5, (int) dujiaoka_config_get('order_expire_time', 5)));
             $configuredExpiry = $now->copy()
                 ->addMinutes(max(5, (int) config('services.binance_pay.quote_ttl_minutes', 15)));
-            $expiresAt = $configuredExpiry->lt($latestExpiry) ? $configuredExpiry : $latestExpiry;
+            // Settlement grace is applied after this deadline by the matcher. It
+            // must not consume the customer's active checkout window.
+            $expiresAt = $configuredExpiry->lt($shopExpiry) ? $configuredExpiry : $shopExpiry;
             if ($expiresAt->lte($now->copy()->addMinute())) {
                 throw new RuntimeException('The order is too close to expiry for Binance Pay.');
             }

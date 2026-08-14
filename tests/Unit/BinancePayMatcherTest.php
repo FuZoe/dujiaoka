@@ -2,6 +2,8 @@
 
 namespace Tests\Unit;
 
+use App\Jobs\CouponBack;
+use App\Jobs\OrderExpired;
 use App\Models\BinancePayAttempt;
 use App\Models\BinancePaySetting;
 use App\Models\Order;
@@ -10,6 +12,7 @@ use App\Service\BinancePayMatcher;
 use App\Service\OrderProcessService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Mockery;
 use Tests\Support\BuildsBinancePayTables;
 use Tests\TestCase;
@@ -168,6 +171,98 @@ class BinancePayMatcherTest extends TestCase
 
         $this->assertSame(1, $result['matched']);
         $this->assertSame(BinancePayAttempt::STATUS_PAID, $attempt->fresh()->status);
+    }
+
+    public function test_order_expiry_is_deferred_while_an_on_time_payment_settles(): void
+    {
+        $expiresAt = Carbon::parse('2026-08-14 09:33:02');
+        Carbon::setTestNow($expiresAt);
+        Queue::fake();
+        config([
+            'services.binance_pay.settlement_grace_seconds' => 300,
+            'services.binance_pay.poll_interval_seconds' => 60,
+        ]);
+
+        try {
+            $this->readySetting();
+            $order = $this->order('BINANCEORDER015', '0.01');
+            $attempt = $this->attempt(
+                $order,
+                '0.00147100',
+                $expiresAt->copy()->subMinutes(5),
+                $expiresAt
+            );
+
+            (new OrderExpired($order->order_sn))->handle();
+
+            $this->assertSame(
+                Order::STATUS_WAIT_PAY,
+                (int) $order->fresh()->status
+            );
+            Queue::assertPushed(OrderExpired::class, function (OrderExpired $job) use ($expiresAt) {
+                return $job->delay instanceof Carbon
+                    && $job->delay->equalTo($expiresAt->copy()->addMinutes(6));
+            });
+            Queue::assertNotPushed(CouponBack::class);
+
+            Carbon::setTestNow($expiresAt->copy()->addMinute());
+            $client = Mockery::mock(BinancePayClient::class);
+            $client->shouldReceive('transactions')->once()->andReturn([
+                $this->transaction(
+                    'TX_ON_TIME_AFTER_SHOP_EXPIRY',
+                    '0.00147100',
+                    $expiresAt->copy()->subSecond()
+                ),
+            ]);
+            $orders = Mockery::mock(OrderProcessService::class);
+            $orders->shouldReceive('completedOrder')->once();
+
+            $result = (new BinancePayMatcher($client, $orders))->poll();
+
+            $this->assertSame(1, $result['matched']);
+            $this->assertSame(BinancePayAttempt::STATUS_PAID, $attempt->fresh()->status);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_unpaid_binance_order_expires_after_the_settlement_window(): void
+    {
+        $now = Carbon::parse('2026-08-14 09:39:03');
+        Carbon::setTestNow($now);
+        Queue::fake();
+        config([
+            'services.binance_pay.settlement_grace_seconds' => 300,
+            'services.binance_pay.poll_interval_seconds' => 60,
+        ]);
+
+        try {
+            $order = $this->order('BINANCEORDER016', '0.01');
+            $this->attempt(
+                $order,
+                '0.00147200',
+                $now->copy()->subMinutes(11),
+                $now->copy()->subMinutes(6)->subSecond()
+            );
+
+            (new OrderExpired($order->order_sn))->handle();
+
+            $this->assertSame(Order::STATUS_EXPIRED, (int) $order->fresh()->status);
+            Queue::assertNotPushed(OrderExpired::class);
+            Queue::assertPushed(CouponBack::class, 1);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_expiry_update_does_not_overwrite_a_processing_order(): void
+    {
+        $order = $this->order('BINANCEORDER017', '0.01', Order::STATUS_PROCESSING);
+
+        $updated = app('Service\OrderService')->expiredOrderSN($order->order_sn);
+
+        $this->assertFalse($updated);
+        $this->assertSame(Order::STATUS_PROCESSING, (int) $order->fresh()->status);
     }
 
     public function test_fulfilment_failure_releases_claim_for_retry(): void
