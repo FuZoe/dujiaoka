@@ -64,8 +64,8 @@ class RestockNotificationServiceTest extends TestCase
         Queue::assertPushed(TelegramRestockNotification::class, 1);
     }
 
-    /** @dataProvider validChannelTargets */
-    public function test_it_accepts_public_and_private_channel_targets(string $target): void
+    /** @dataProvider validTargets */
+    public function test_it_accepts_public_private_channel_and_admin_chat_targets(string $target): void
     {
         Queue::fake();
         Cache::forever('system-setting', [
@@ -80,11 +80,12 @@ class RestockNotificationServiceTest extends TestCase
         Queue::assertPushed(TelegramRestockNotification::class, 1);
     }
 
-    public function validChannelTargets(): array
+    public function validTargets(): array
     {
         return [
             'public username' => ['@channel_username'],
             'private channel id' => ['-1001234567890'],
+            'admin private chat id' => ['1234567890'],
         ];
     }
 

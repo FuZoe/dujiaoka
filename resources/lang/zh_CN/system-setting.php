@@ -36,7 +36,7 @@ return [
         'is_open_telegram_restock' => '补货通知',
         'is_open_telegram_customer_order' => '顾客订单私聊通知',
         'telegram_send_order_cards' => '私聊通知发送卡密',
-        'telegram_userid' => 'Telegram目标频道',
+        'telegram_userid' => 'Telegram补货目标',
         'telegram_bot_token' => 'Telegram通讯token',
 		'is_open_bark_push' => '是否开启Bark推送',
 		'is_open_bark_push_url' => '是否推送订单URL',
@@ -68,7 +68,7 @@ return [
         'is_open_telegram_restock' => '批量导入卡密使库存增加时发送，每个导入批次最多一条。',
         'is_open_telegram_customer_order' => '仅向已绑定账户对应的 Telegram 私聊发送该顾客自己的订单事件；目标频道始终只接收补货公告。',
         'telegram_send_order_cards' => '开启后，自动发货完成通知会包含卡密；关闭后仅发送状态和受保护的订单链接。',
-        'telegram_channel' => '频道配置步骤：1. 将机器人添加到目标频道并设为管理员，至少授予“发布消息”权限。2. 公开频道填写 @channel_username（包含 @）。3. 私有频道填写 -100 开头的数值 chat_id；可先给机器人发送消息，再调用 Bot API getUpdates 查看 channel_post/chat/id，或把频道消息转发给可查询原始 chat_id 的机器人取得。请勿填写个人或群组 chat_id。',
+        'telegram_channel' => '目标可填写：1. 公开频道的 @channel_username（包含 @）；2. 私有频道的 -100 开头 chat_id（先将机器人设为频道管理员并授予发布权限）；3. 管理员私聊 chat_id（正数）。频道 ID 可通过 Bot API 的 channel_post.chat.id 获取。',
     ],
     'rule_messages' => [
         'save_system_setting_success' => '系统配置保存成功！',

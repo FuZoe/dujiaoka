@@ -35,4 +35,20 @@ class TelegramRestockNotificationTest extends TestCase
 
         $this->assertTrue(Cache::has('telegram-restock:sent:stable-batch-id'));
     }
+
+    public function test_admin_private_chat_target_is_sent(): void
+    {
+        Cache::forever('system-setting', [
+            'is_open_telegram_restock' => 1,
+            'telegram_bot_token' => 'TOKEN',
+            'telegram_userid' => '1234567890',
+        ]);
+        $client = Mockery::mock(TelegramBotClient::class);
+        $client->shouldReceive('sendMessage')
+            ->once()
+            ->with('TOKEN', '1234567890', 'message')
+            ->andReturn(102);
+
+        (new TelegramRestockNotification('private-target-batch', 42, 'message'))->handle($client);
+    }
 }

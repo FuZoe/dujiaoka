@@ -112,21 +112,21 @@ class TelegramOrderNotificationServiceTest extends TestCase
         $this->assertSame('sent', $notification->refresh()->status);
     }
 
-    public function test_channel_and_private_job_targets_are_strictly_separated(): void
+    public function test_restock_and_private_job_targets_are_strictly_separated(): void
     {
         Cache::forever('system-setting', [
             'is_open_telegram_restock' => 1,
             'telegram_bot_token' => 'TOKEN',
-            'telegram_userid' => '4004',
+            'telegram_userid' => 'chat:4004',
         ]);
         $client = Mockery::mock(TelegramBotClient::class);
         $client->shouldNotReceive('sendMessage');
 
         try {
             (new TelegramRestockNotification('bad-target', 1, 'restock'))->handle($client);
-            $this->fail('A positive private chat target must be rejected for restock announcements.');
+            $this->fail('An invalid restock target must be rejected.');
         } catch (RuntimeException $exception) {
-            $this->assertSame('Telegram restock target is not a channel.', $exception->getMessage());
+            $this->assertSame('Telegram restock target is invalid.', $exception->getMessage());
         }
 
         try {

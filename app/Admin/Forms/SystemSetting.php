@@ -61,6 +61,7 @@ class SystemSetting extends Form
             $this->text('server_jiang_token', admin_trans('system-setting.fields.server_jiang_token'));
             $this->text('telegram_bot_token', admin_trans('system-setting.fields.telegram_bot_token'));
             $this->text('telegram_userid', admin_trans('system-setting.fields.telegram_userid'))
+                ->rules(['nullable', 'regex:/^(?:@[A-Za-z][A-Za-z0-9_]{4,31}|-100[0-9]{6,}|[1-9][0-9]{0,14})$/'])
                 ->help(admin_trans('system-setting.helps.telegram_channel'));
             $this->switch('is_open_telegram_restock', admin_trans('system-setting.fields.is_open_telegram_restock'))
                 ->default(BaseModel::STATUS_CLOSE)
