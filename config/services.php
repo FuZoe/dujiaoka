@@ -49,7 +49,6 @@ return [
         'quote_ttl_minutes' => env('BINANCE_PAY_QUOTE_TTL_MINUTES', 15),
         'match_time_skew_seconds' => env('BINANCE_PAY_MATCH_TIME_SKEW_SECONDS', 5),
         'settlement_grace_seconds' => env('BINANCE_PAY_SETTLEMENT_GRACE_SECONDS', 300),
-        'amount_precision' => env('BINANCE_PAY_AMOUNT_PRECISION', 6),
         'currency' => env('BINANCE_PAY_CURRENCY', 'USDT'),
         'cny_per_usdt' => env('BINANCE_PAY_CNY_PER_USDT', '7.20000000'),
         'receive_qr_payload' => env('BINANCE_PAY_QR_URL', 'https://app.binance.com/uni-qr/Sg9jgWUd'),

@@ -11,6 +11,8 @@ use RuntimeException;
 
 class BinancePayQuoteService
 {
+    private const QUOTE_DECIMALS = 2;
+
     public function quote(Order $order): BinancePayAttempt
     {
         BinancePaySetting::current();
@@ -36,7 +38,9 @@ class BinancePayQuoteService
 
             $rate = (string) $setting->cny_per_usdt;
             $currency = strtoupper((string) config('services.binance_pay.currency', 'USDT'));
-            $precision = min(8, max(6, (int) config('services.binance_pay.amount_precision', 6)));
+            // Binance checkout amounts are deliberately quoted in whole cents.
+            // The smallest unit for collision avoidance is therefore 0.01 USDT.
+            $precision = self::QUOTE_DECIMALS;
             $candidateUnits = $this->ceilQuoteUnits((string) $lockedOrder->actual_price, $rate, $precision);
             $quotedAmount = $this->formatUnits($candidateUnits, $precision);
             $attempts = 0;
@@ -79,10 +83,10 @@ class BinancePayQuoteService
     private function ceilQuoteUnits(string $amount, string $rate, int $precision): string
     {
         $scale = bcpow('10', (string) $precision, 0);
-        $quotient = bcdiv($amount, $rate, $precision + 8);
-        $scaled = bcmul($quotient, $scale, 8);
-        $units = bcadd($scaled, '0', 0);
-        if (bccomp($scaled, $units, 8) > 0) {
+        $scaledAmount = bcmul($amount, $scale, 8);
+        $units = bcdiv($scaledAmount, $rate, 0);
+        $coveredAmount = bcmul($units, $rate, 8);
+        if (bccomp($coveredAmount, $scaledAmount, 8) < 0) {
             $units = bcadd($units, '1', 0);
         }
 

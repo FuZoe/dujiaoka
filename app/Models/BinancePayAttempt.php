@@ -48,6 +48,14 @@ class BinancePayAttempt extends BaseModel
     public function getExpectedUsdtAttribute(): string
     {
         $amount = bcadd((string) $this->quoted_amount, '0', 8);
+
+        // New quotes use whole USDT cents and must retain both decimals in the
+        // checkout/API. Existing sub-cent quotes keep their original precision.
+        $centAmount = bcadd($amount, '0', 2);
+        if (bccomp($amount, $centAmount, 8) === 0) {
+            return $centAmount;
+        }
+
         $amount = rtrim(rtrim($amount, '0'), '.');
 
         return $amount === '' ? '0' : $amount;

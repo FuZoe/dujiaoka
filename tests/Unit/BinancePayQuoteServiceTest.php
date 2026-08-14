@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Models\BinancePayAttempt;
 use App\Models\BinancePaySetting;
 use App\Models\Order;
 use App\Service\BinancePayQuoteService;
@@ -21,7 +22,6 @@ class BinancePayQuoteServiceTest extends TestCase
         $this->buildBinancePayTables();
         config([
             'services.binance_pay.currency' => 'USDT',
-            'services.binance_pay.amount_precision' => 2,
             'services.binance_pay.quote_ttl_minutes' => 15,
         ]);
 
@@ -46,10 +46,42 @@ class BinancePayQuoteServiceTest extends TestCase
         $secondQuote = $quotes->quote($second);
         $refreshed = $quotes->quote($first);
 
-        $this->assertSame('1.375', $firstQuote->expected_usdt);
-        $this->assertSame('1.375001', $secondQuote->expected_usdt);
+        $this->assertSame('1.38', $firstQuote->expected_usdt);
+        $this->assertSame('1.39', $secondQuote->expected_usdt);
         $this->assertSame($firstQuote->id, $refreshed->id);
         $this->assertSame('9.90', number_format((float) $firstQuote->cny_amount, 2, '.', ''));
+    }
+
+    public function test_quote_is_rounded_up_to_the_next_usdt_cent(): void
+    {
+        $quote = (new BinancePayQuoteService())->quote($this->order('BINANCEORDER019', '1.00'));
+
+        $this->assertSame('0.14', $quote->expected_usdt);
+    }
+
+    public function test_whole_cent_quotes_keep_two_decimal_places(): void
+    {
+        $quote = (new BinancePayQuoteService())->quote($this->order('BINANCEORDER020', '1.44'));
+
+        $this->assertSame('0.20', $quote->expected_usdt);
+    }
+
+    public function test_rounding_does_not_lose_a_fraction_beyond_intermediate_precision(): void
+    {
+        $setting = BinancePaySetting::query()->findOrFail(1);
+        $setting->cny_per_usdt = '5.31372549';
+        $setting->save();
+
+        $quote = (new BinancePayQuoteService())->quote($this->order('BINANCEORDER021', '2.71'));
+
+        $this->assertSame('0.52', $quote->expected_usdt);
+    }
+
+    public function test_legacy_sub_cent_quote_keeps_its_original_precision(): void
+    {
+        $attempt = new BinancePayAttempt(['quoted_amount' => '0.00147100']);
+
+        $this->assertSame('0.001471', $attempt->expected_usdt);
     }
 
     public function test_official_receive_url_and_current_credentials_are_required(): void
