@@ -5,6 +5,8 @@ namespace Tests\Unit;
 use App\Models\BinancePaySetting;
 use App\Models\Order;
 use App\Service\BinancePayQuoteService;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\BuildsBinancePayTables;
 use Tests\TestCase;
@@ -68,6 +70,26 @@ class BinancePayQuoteServiceTest extends TestCase
 
         $this->expectException(\RuntimeException::class);
         (new BinancePayQuoteService())->quote($this->order('BINANCEORDER013', '9.90'));
+    }
+
+    public function test_settlement_grace_does_not_consume_a_five_minute_checkout_window(): void
+    {
+        $now = Carbon::parse('2026-08-14 09:28:02');
+        Carbon::setTestNow($now);
+        Cache::forever('system-setting', ['order_expire_time' => 5]);
+        config(['services.binance_pay.settlement_grace_seconds' => 300]);
+
+        try {
+            $quote = (new BinancePayQuoteService())->quote(
+                $this->order('BINANCEORDER014', '0.01')
+            );
+
+            $this->assertTrue($quote->expires_at->equalTo($now->copy()->addMinutes(5)));
+            $this->assertTrue($quote->expires_at->gt($now->copy()->addMinute()));
+        } finally {
+            Cache::forget('system-setting');
+            Carbon::setTestNow();
+        }
     }
 
     private function order(string $orderSn, string $price): Order

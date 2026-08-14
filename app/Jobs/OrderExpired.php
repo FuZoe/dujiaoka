@@ -2,7 +2,9 @@
 
 namespace App\Jobs;
 
+use App\Models\BinancePayAttempt;
 use App\Models\Order;
+use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -53,11 +55,52 @@ class OrderExpired implements ShouldQueue
     public function handle()
     {
         // 如果x分钟后还没支付就算过期
-        $order = app('Service\OrderService')->detailOrderSN($this->orderSN);
-        if ($order && $order->status == Order::STATUS_WAIT_PAY) {
-            app('Service\OrderService')->expiredOrderSN($this->orderSN);
+        $order = Order::query()->where('order_sn', $this->orderSN)->first();
+        if (!$order || $this->deferForBinanceSettlement($order)) {
+            return;
+        }
+        if ((int) $order->status !== Order::STATUS_WAIT_PAY) {
+            return;
+        }
+        if (app('Service\OrderService')->expiredOrderSN($this->orderSN)) {
             // 回退优惠券
             CouponBack::dispatch($order);
         }
+    }
+
+    private function deferForBinanceSettlement(Order $order): bool
+    {
+        $attempt = BinancePayAttempt::query()
+            ->where('order_id', $order->id)
+            ->whereIn('status', [
+                BinancePayAttempt::STATUS_PENDING,
+                BinancePayAttempt::STATUS_PROCESSING,
+                BinancePayAttempt::STATUS_EXPIRED,
+            ])
+            ->first();
+        if (!$attempt || !$attempt->expires_at) {
+            return false;
+        }
+
+        $graceSeconds = max(60, (int) config('services.binance_pay.settlement_grace_seconds', 300));
+        $pollBufferSeconds = max(4, (int) config('services.binance_pay.poll_interval_seconds', 60));
+        $settlementDeadline = $attempt->expires_at->copy()
+            ->addSeconds($graceSeconds + $pollBufferSeconds);
+        if ($settlementDeadline->lte(Carbon::now())) {
+            // A failed fulfilment can leave the order PROCESSING while the
+            // matcher rolls the attempt back. Keep one recovery check queued.
+            if ((int) $order->status === Order::STATUS_PROCESSING) {
+                self::dispatch($this->orderSN)
+                    ->delay(Carbon::now()->addSeconds($pollBufferSeconds));
+
+                return true;
+            }
+
+            return false;
+        }
+
+        self::dispatch($this->orderSN)->delay($settlementDeadline);
+
+        return true;
     }
 }
