@@ -24,6 +24,8 @@ async function withServer(run, options = {}) {
     smsfSecret: SMSF_SECRET,
     shopSecret: SHOP_SECRET,
     stateFile,
+    // Tests must never use the real shop callback endpoint by default.
+    fetchImpl: async () => ({ ok: true, status: 200 }),
     ...serverOptions
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -120,6 +122,122 @@ test('other amounts are accepted without triggering success', async () => {
     });
     assert.equal(response.status, 202);
     assert.deepEqual(await response.json(), { accepted: true, matched: false, reason: 'order_required' });
+  });
+});
+
+test('payment transaction ids are idempotent globally and reject cross-order reuse', async () => {
+  const callbacks = [];
+  await withServer(async (baseUrl) => {
+    const register = async (orderId, amountFen) => {
+      const body = JSON.stringify({
+        amountFen,
+        callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+        orderId,
+        returnUrl: `https://shop.newzoe.cloud/detail-order-sn/${orderId}`,
+        title: orderId
+      });
+      const timestamp = String(NOW);
+      const response = await fetch(`${baseUrl}/api/shop/orders`, {
+        body,
+        headers: {
+          'content-type': 'application/json',
+          'x-shop-signature': signPayload(SHOP_SECRET, timestamp, Buffer.from(body)),
+          'x-shop-timestamp': timestamp
+        },
+        method: 'POST'
+      });
+      assert.equal(response.status, 201);
+    };
+    await register('TXNORDER0001', 100);
+    await register('TXNORDER0002', 200);
+
+    const notify = async (orderId, amountFen) => {
+      const body = JSON.stringify({ amountFen, orderId, transactionId: 'provider-txn-global-01' });
+      const response = await fetch(`${baseUrl}/api/payment/notify`, {
+        body,
+        headers: signedHeaders(body),
+        method: 'POST'
+      });
+      return { body: await response.json(), status: response.status };
+    };
+
+    const first = await notify('TXNORDER0001', 100);
+    assert.equal(first.status, 200);
+    assert.equal(first.body.duplicate, false);
+    const exactReplay = await notify('TXNORDER0001', 100);
+    assert.deepEqual(exactReplay, {
+      body: { accepted: true, delivered: 0, duplicate: true, matched: true },
+      status: 200
+    });
+    const otherOrder = await notify('TXNORDER0002', 200);
+    assert.deepEqual(otherOrder, {
+      body: { accepted: false, error: 'transaction_conflict', matched: false },
+      status: 409
+    });
+    const otherAmount = await notify('TXNORDER0001', 101);
+    assert.deepEqual(otherAmount, {
+      body: { accepted: false, error: 'transaction_conflict', matched: false },
+      status: 409
+    });
+    assert.equal((await (await fetch(`${baseUrl}/api/orders/TXNORDER0002`)).json()).status, 'pending');
+    assert.equal(callbacks.length, 1);
+  }, {
+    fetchImpl: async (url, request) => {
+      callbacks.push({ url, request });
+      return { ok: true, status: 200 };
+    }
+  });
+});
+
+test('a paid order keeps its transaction id after the compact audit list rotates', async () => {
+  await withServer(async (baseUrl) => {
+    const orderBody = JSON.stringify({
+      amountFen: 200,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      orderId: 'TXNREUSEORDER02',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/TXNREUSEORDER02',
+      title: 'new order'
+    });
+    const registered = await fetch(`${baseUrl}/api/shop/orders`, {
+      body: orderBody,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, String(NOW), Buffer.from(orderBody)),
+        'x-shop-timestamp': String(NOW)
+      },
+      method: 'POST'
+    });
+    assert.equal(registered.status, 201);
+
+    const body = JSON.stringify({
+      amountFen: 200,
+      orderId: 'TXNREUSEORDER02',
+      transactionId: 'old-provider-transaction-01'
+    });
+    const response = await fetch(`${baseUrl}/api/payment/notify`, {
+      body,
+      headers: signedHeaders(body),
+      method: 'POST'
+    });
+    assert.deepEqual({ body: await response.json(), status: response.status }, {
+      body: { accepted: false, error: 'transaction_conflict', matched: false },
+      status: 409
+    });
+  }, {
+    initialState: {
+      orders: [{
+        amountFen: 100,
+        createdAt: new Date(NOW - 60000).toISOString(),
+        id: 'TXNREUSEPAID001',
+        paidAt: new Date(NOW - 30000).toISOString(),
+        payee: 'admin',
+        source: 'dujiaoka',
+        status: 'paid',
+        transactionId: 'old-provider-transaction-01'
+      }],
+      transactions: [],
+      users: []
+    }
   });
 });
 
@@ -232,6 +350,11 @@ test('checkout closes its QR at 20 minutes while payment success can arrive duri
     const matched = await response.json();
     assert.equal(matched.orderId, 'GRACEORDER500');
     assert.equal(matched.delivered, 1);
+    const paidOrder = await (await fetch(`${baseUrl}/api/orders/GRACEORDER500`)).json();
+    assert.equal(paidOrder.status, 'paid');
+    assert.equal(paidOrder.qrcodeReady, false);
+    const paidQr = await fetch(`${baseUrl}/wechat-pay.jpg?order=GRACEORDER500`);
+    assert.deepEqual([paidQr.status, await paidQr.json()], [410, { error: 'order_paid' }]);
     while (!received.includes('event: payment')) {
       received += decoder.decode((await reader.read()).value);
     }
@@ -676,13 +799,11 @@ test('a disabled pending order stays closed until signed shop re-registration re
   });
 });
 
-test('opening a legacy colliding pending order repairs its payable amount', async () => {
+test('startup migration quarantines a legacy pending order colliding with a paid amount', async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/orders/LEGACYPENDING01`);
-    assert.equal(response.status, 200);
-    const order = await response.json();
-    assert.equal(order.baseAmountFen, 13500);
-    assert.equal(order.amountFen, 13501);
+    assert.equal(response.status, 410);
+    assert.deepEqual(await response.json(), { error: 'order_inactive' });
   }, {
     initialState: {
       orders: [
@@ -714,14 +835,95 @@ test('opening a legacy colliding pending order repairs its payable amount', asyn
   });
 });
 
-test('a previously unmatched delayed notification cannot settle a later order when retried', async () => {
+test('SSE reconnect reports an already-paid order even after its matching deadline', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/events?client=paidreconnect123456&order=PAIDSSEORDER0001`);
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    assert.match(body, /event: status/);
+    assert.match(body, /"status":"paid"/);
+    assert.doesNotMatch(body, /"status":"expired"/);
+  }, {
+    initialState: {
+      orders: [{
+        amountFen: 500,
+        createdAt: new Date(NOW - 30 * 60 * 1000).toISOString(),
+        expiresAt: new Date(NOW - 10 * 60 * 1000).toISOString(),
+        id: 'PAIDSSEORDER0001',
+        matchExpiresAt: new Date(NOW - 5 * 60 * 1000).toISOString(),
+        paidAt: new Date(NOW - 6 * 60 * 1000).toISOString(),
+        payee: 'admin',
+        source: 'dujiaoka',
+        status: 'paid',
+        transactionId: 'paid-sse-transaction-01'
+      }],
+      transactions: [],
+      users: []
+    }
+  });
+});
+
+test('startup migration keeps the earliest active pending amount and quarantines later collisions', async () => {
+  await withServer(async (baseUrl) => {
+    const earliest = await fetch(`${baseUrl}/api/orders/LEGACYEARLY01`);
+    assert.equal(earliest.status, 200);
+    assert.equal((await earliest.json()).amountFen, 500);
+
+    const later = await fetch(`${baseUrl}/api/orders/LEGACYLATER01`);
+    assert.equal(later.status, 410);
+    assert.deepEqual(await later.json(), { error: 'order_inactive' });
+
+    const expired = await fetch(`${baseUrl}/api/orders/LEGACYEXPIRED01`);
+    assert.equal(expired.status, 200);
+    const expiredOrder = await expired.json();
+    assert.equal(expiredOrder.status, 'expired');
+    assert.equal(expiredOrder.amountFen, 500);
+  }, {
+    initialState: {
+      orders: [
+        {
+          amountFen: 500,
+          createdAt: new Date(NOW - 60000).toISOString(),
+          id: 'LEGACYLATER01',
+          source: 'manual',
+          status: 'pending',
+          title: 'later',
+          payee: 'admin'
+        },
+        {
+          amountFen: 500,
+          createdAt: new Date(NOW - 120000).toISOString(),
+          id: 'LEGACYEARLY01',
+          source: 'manual',
+          status: 'pending',
+          title: 'early',
+          payee: 'admin'
+        },
+        {
+          amountFen: 500,
+          createdAt: new Date(NOW - 30 * 60 * 1000).toISOString(),
+          id: 'LEGACYEXPIRED01',
+          source: 'manual',
+          status: 'pending',
+          title: 'expired',
+          payee: 'admin'
+        }
+      ],
+      transactions: [],
+      users: []
+    }
+  });
+});
+
+test('an exact unmatched notification replay stays rejected while a new timestamp can match a new payment', async () => {
   let clock = NOW;
   await withServer(async (baseUrl) => {
     const fields = { content: '微信支付收款到账8.88元，今日第1笔', from: 'com.tencent.mm', title: '微信支付' };
-    const first = await fetch(`${baseUrl}/api/smsf/notify`, { body: smsfForm(fields, String(clock)), method: 'POST' });
+    const originalForm = smsfForm(fields, String(clock));
+    const first = await fetch(`${baseUrl}/api/smsf/notify`, { body: originalForm, method: 'POST' });
     assert.equal(first.status, 409);
 
-    clock += 60 * 60 * 1000;
+    clock += 60 * 1000;
     const body = JSON.stringify({
       amountFen: 888,
       callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
@@ -741,16 +943,124 @@ test('a previously unmatched delayed notification cannot settle a later order wh
     });
     await fetch(`${baseUrl}/api/orders/LATERORDER1234`);
 
-    const retry = await fetch(`${baseUrl}/api/smsf/notify`, { body: smsfForm(fields, String(clock)), method: 'POST' });
+    const retry = await fetch(`${baseUrl}/api/smsf/notify`, { body: originalForm, method: 'POST' });
     assert.equal(retry.status, 409);
     assert.equal((await (await fetch(`${baseUrl}/api/orders/LATERORDER1234`)).json()).status, 'pending');
+
+    clock = NOW + 26 * 60 * 1000 + 1;
+    const newOrderBody = JSON.stringify({
+      amountFen: 888,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      orderId: 'LATERORDER5678',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/LATERORDER5678',
+      title: '新的同额订单'
+    });
+    const newTimestamp = String(clock);
+    const registered = await fetch(`${baseUrl}/api/shop/orders`, {
+      body: newOrderBody,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, newTimestamp, Buffer.from(newOrderBody)),
+        'x-shop-timestamp': newTimestamp
+      },
+      method: 'POST'
+    });
+    assert.equal(registered.status, 201);
+    const newPayment = await fetch(`${baseUrl}/api/smsf/notify`, {
+      body: smsfForm(fields, String(clock)),
+      method: 'POST'
+    });
+    assert.equal(newPayment.status, 200);
+    assert.equal((await newPayment.json()).orderId, 'LATERORDER5678');
   }, {
     fetchImpl: async () => ({ ok: true, status: 200 }),
     now: () => clock
   });
 });
 
+test('SmsForwarder persists notification ids across restart and honors receive_time', async () => {
+  let clock = NOW;
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'newzoe-pay-smsf-restart-'));
+  const stateFile = path.join(directory, 'state.json');
+  const callbacks = [];
+  let server;
+  let baseUrl;
+  const start = async () => {
+    server = createPayServer({
+      now: () => clock,
+      secret: SECRET,
+      smsfSecret: SMSF_SECRET,
+      shopSecret: SHOP_SECRET,
+      stateFile,
+      fetchImpl: async (url, request) => {
+        callbacks.push({ request, url });
+        return { ok: true, status: 200 };
+      }
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    baseUrl = `http://127.0.0.1:${server.address().port}`;
+  };
+  const stop = async () => new Promise((resolve) => server.close(resolve));
+  const register = async (orderId) => {
+    const body = JSON.stringify({
+      amountFen: 123,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      orderId,
+      returnUrl: `https://shop.newzoe.cloud/detail-order-sn/${orderId}`,
+      title: orderId
+    });
+    const timestamp = String(clock);
+    const response = await fetch(`${baseUrl}/api/shop/orders`, {
+      body,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, timestamp, Buffer.from(body)),
+        'x-shop-timestamp': timestamp
+      },
+      method: 'POST'
+    });
+    assert.equal(response.status, 201);
+  };
+
+  try {
+    await start();
+    await register('RESTARTSMSF01');
+    const fields = {
+      content: '微信支付收款到账1.23元',
+      from: 'com.tencent.mm',
+      receive_time: String(clock),
+      title: '微信支付'
+    };
+    const original = smsfForm(fields, String(clock));
+    const first = await fetch(`${baseUrl}/api/smsf/notify`, { body: original, method: 'POST' });
+    assert.equal(first.status, 200);
+    assert.equal((await first.json()).duplicate, false);
+    await stop();
+
+    await start();
+    const replay = await fetch(`${baseUrl}/api/smsf/notify`, { body: original, method: 'POST' });
+    assert.deepEqual([replay.status, await replay.json()], [200, { accepted: true, duplicate: true, matched: true }]);
+
+    clock = NOW + 25 * 60 * 1000 + 1;
+    await register('RESTARTSMSF02');
+    const staleSource = smsfForm({ ...fields, receive_time: String(clock - 60 * 1000) }, String(clock));
+    const stale = await fetch(`${baseUrl}/api/smsf/notify`, { body: staleSource, method: 'POST' });
+    assert.equal(stale.status, 409);
+    assert.deepEqual(await stale.json(), { accepted: false, error: 'no_pending_order', matched: false });
+
+    const fresh = smsfForm({ ...fields, receive_time: String(clock) }, String(clock));
+    const second = await fetch(`${baseUrl}/api/smsf/notify`, { body: fresh, method: 'POST' });
+    assert.equal(second.status, 200);
+    assert.equal((await second.json()).orderId, 'RESTARTSMSF02');
+    assert.equal(callbacks.length, 2);
+  } finally {
+    if (server?.listening) await stop();
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 test('SmsForwarder deduplicates the same payment sent by overlapping rules', async () => {
+  const callbacks = [];
   await withServer(async (baseUrl) => {
     const orderBody = JSON.stringify({
       amountFen: 1,
@@ -797,6 +1107,12 @@ test('SmsForwarder deduplicates the same payment sent by overlapping rules', asy
       duplicate: true,
       matched: true
     });
+    assert.equal(callbacks.length, 1);
+  }, {
+    fetchImpl: async (url, request) => {
+      callbacks.push({ request, url });
+      return { ok: true, status: 200 };
+    }
   });
 });
 

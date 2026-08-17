@@ -10,7 +10,6 @@ const LEGACY_QRCODE_DIR = path.join(PUBLIC_DIR, 'qrcodes');
 const SMSF_DUP_WIN = 5000;
 const DEFAULT_PAYMENT_MINUTES = Number(process.env.PAY_ORDER_TTL_MINUTES || 20);
 const SETTLEMENT_GRACE_MINUTES = Number(process.env.PAY_SETTLEMENT_GRACE_MINUTES || 5);
-const SMSF_REPLAY_HOURS = Number(process.env.SMSF_REPLAY_HOURS || 24);
 const MAX_MANUAL_PAYMENT_MINUTES = 24 * 60;
 const CALLBACK_LEASE = 2 * 60 * 1000;
 const SMSF_EVENT_LIMIT = 500;
@@ -50,15 +49,13 @@ const cbOrigin=opts.allowedCallbackOrigin??process.env.SHOP_CALLBACK_ORIGIN??'ht
 const stateFile=opts.stateFile||process.env.PAY_STATE_FILE||path.join(__dirname,'data','state.json');
 const qrcodeDir=opts.qrcodeDir||process.env.PAY_QRCODE_DIR||path.join(path.dirname(stateFile),'qrcodes');
 const now=opts.now||(()=>Date.now());
+const startupNow=now();
 const fetchImpl=opts.fetchImpl||global.fetch;
 const paymentMinutes=Number.isFinite(Number(opts.paymentMinutes))?Number(opts.paymentMinutes):DEFAULT_PAYMENT_MINUTES;
 const settlementGraceMinutes=Number.isFinite(Number(opts.settlementGraceMinutes))?Number(opts.settlementGraceMinutes):SETTLEMENT_GRACE_MINUTES;
 if(!Number.isFinite(paymentMinutes)||!Number.isFinite(settlementGraceMinutes)||paymentMinutes<1||settlementGraceMinutes<0)throw new Error('invalid payment expiry configuration');
 const paymentWindow=Math.round(paymentMinutes*60*1000);
 const settlementGrace=Math.round(settlementGraceMinutes*60*1000);
-const replayHours=Number.isFinite(SMSF_REPLAY_HOURS)&&SMSF_REPLAY_HOURS>0?SMSF_REPLAY_HOURS:24;
-const notificationReplayWindow=replayHours*60*60*1000;
-
 const clients=new Map();
 const state=loadState(stateFile);
 seedUsers(state);
@@ -76,8 +73,36 @@ const matchExpires=Date.parse(order.matchExpiresAt||'');
 const normalizedExpires=Date.parse(order.expiresAt||'');
 if(!Number.isFinite(matchExpires)&&Number.isFinite(normalizedExpires)){order.matchExpiresAt=new Date(normalizedExpires+settlementGrace).toISOString();stateMigrated=true}
 }
+// Settled amounts and already-inactive orders are immutable. Repair active
+// pending collisions deterministically without silently changing a displayed
+// amount: the later order is quarantined and re-registration allocates anew.
+const occupiedByPayee=new Map();
+for(const order of state.orders){
+const matchExpires=Date.parse(order.matchExpiresAt||'');
+if(order.status!=='paid'||!Number.isInteger(order.amountFen)||!Number.isFinite(matchExpires)||matchExpires<=startupNow)continue;
+const payee=order.payee||'admin';const occupied=occupiedByPayee.get(payee)||new Set();occupied.add(order.amountFen);occupiedByPayee.set(payee,occupied)
+}
+const activePending=state.orders.filter(order=>{
+const matchExpires=Date.parse(order.matchExpiresAt||'');
+return order.status==='pending'&&!order.autoMatchDisabledAt&&Number.isInteger(order.amountFen)&&Number.isFinite(matchExpires)&&matchExpires>startupNow
+}).sort((a,b)=>{
+const aRef=Date.parse(a.activatedAt||a.createdAt||'');const bRef=Date.parse(b.activatedAt||b.createdAt||'');
+const byTime=(Number.isFinite(aRef)?aRef:Number.MAX_SAFE_INTEGER)-(Number.isFinite(bRef)?bRef:Number.MAX_SAFE_INTEGER);
+if(byTime)return byTime;const aId=String(a.id||''),bId=String(b.id||'');return aId===bId?0:(aId<bId?-1:1)
+});
+for(const order of activePending){
+const payee=order.payee||'admin';const occupied=occupiedByPayee.get(payee)||new Set();
+if(occupied.has(order.amountFen)){order.autoMatchDisabledAt=new Date(startupNow).toISOString();order.updatedAt=order.autoMatchDisabledAt;stateMigrated=true;continue}
+occupied.add(order.amountFen);occupiedByPayee.set(payee,occupied)
+}
 for(const user of state.users){if(user.username!=='admin'&&!user.smsfSecret){user.smsfSecret=crypto.randomBytes(32).toString('hex');stateMigrated=true}}
-const txnIds=new Set(state.txns.map(i=>i.transactionId));
+const txnRecords=new Map(state.txns.filter(i=>i&&i.transactionId).map(i=>[i.transactionId,i]));
+// Keep transaction identity available even after the compact transaction
+// audit list rolls over. Paid orders are the durable source of truth.
+for(const order of state.orders){
+if(order.status==='paid'&&order.transactionId&&!txnRecords.has(order.transactionId))txnRecords.set(order.transactionId,{amountFen:order.amountFen,orderId:order.id,paidAt:order.paidAt||order.settledAt||'',transactionId:order.transactionId})
+}
+const txnIds=new Set(txnRecords.keys());
 const recentSmsF=new Map();
 const loginAttempts=new Map();
 fs.mkdirSync(qrcodeDir,{recursive:true});
@@ -156,7 +181,7 @@ if(amountFen===null)return sendJson(res,409,{error:'amount_unavailable'});
 order={activatedAt:updateTime,amountFen,baseAmountFen:af,createdAt:updateTime,expiresAt:new Date(expiresAt).toISOString(),id,matchExpiresAt:new Date(matchExpiresAt).toISOString()};state.orders.push(order)
 }else{
 const reactivating=!!order.autoMatchDisabledAt;
-const collides=state.orders.some(candidate=>candidate.id!==order.id&&orderOccupiesAmount(candidate,'admin')&&candidate.amountFen===order.amountFen);
+const collides=state.orders.some(candidate=>candidate.id!==order.id&&!candidate.autoMatchDisabledAt&&orderOccupiesAmount(candidate,'admin')&&candidate.amountFen===order.amountFen);
 if(collides||reactivating){
 const amountFen=allocateAmountFen(reactivating?af:(order.baseAmountFen||af),'admin',order.id);
 if(amountFen===null)return sendJson(res,409,{error:'amount_unavailable'});
@@ -185,16 +210,20 @@ async function settleOrder(order,paidAt,tid,{triggerShopCallback=true,manualOver
 if(order.status==='paid')return{duplicate:true,delivered:0};
 order.status='paid';order.paidAt=paidAt;order.settledAt=new Date(now()).toISOString();order.transactionId=tid;
 order.updatedAt=order.settledAt;
-state.txns.push({amountFen:order.amountFen,baseAmountFen:order.baseAmountFen||order.amountFen,orderId:order.id,paidAt,transactionId:tid});
-txnIds.add(tid);persist();
+const txn={amountFen:order.amountFen,baseAmountFen:order.baseAmountFen||order.amountFen,orderId:order.id,paidAt,transactionId:tid};
+state.txns.push(txn);txnIds.add(tid);txnRecords.set(tid,txn);persist();
 const pmt={amountFen:order.amountFen,orderId:order.id,paidAt,status:'paid',test:false};
 const d=broadcast(pmt,'',order.id);
 if(triggerShopCallback)await cbShop(order,tid,{manualOverride});
 return{delivered:d,duplicate:false}
 }
 
-function findPending(amts,payee='admin'){
-return state.orders.filter(o=>o.status==='pending'&&!o.autoMatchDisabledAt&&!orderMatchExpired(o)&&orderPayee(o)===payee&&amts.includes(o.amountFen)).sort((a,b)=>Date.parse(a.activatedAt||a.createdAt)-Date.parse(b.activatedAt||b.createdAt))[0]
+function findPending(amts,payee='admin',sourceTime=NaN){
+return state.orders.filter(o=>{
+if(o.status!=='pending'||o.autoMatchDisabledAt||orderMatchExpired(o)||orderPayee(o)!==payee||!amts.includes(o.amountFen))return false;
+if(!Number.isFinite(sourceTime))return true;
+const reference=Date.parse(o.createdAt||o.activatedAt||'');return !Number.isFinite(reference)||sourceTime>=reference
+}).sort((a,b)=>Date.parse(a.activatedAt||a.createdAt)-Date.parse(b.activatedAt||b.createdAt))[0]
 }
 
 function recordSmsfEvent(data){
@@ -219,6 +248,11 @@ if(!Number.isInteger(af)||!/^[A-Za-z0-9_.:-]{8,128}$/.test(tid))return sendJson(
 if(cid&&!/^[A-Za-z0-9_-]{16,80}$/.test(cid))return sendJson(res,400,{error:'invalid_client'});
 if(isTest&&!cid)return sendJson(res,400,{error:'test_requires_client'});
 const order=oid?orderById(oid):null;
+const priorTxn=txnRecords.get(tid);
+if(priorTxn){
+if(order&&priorTxn.orderId===order.id&&priorTxn.amountFen===af)return sendJson(res,200,{accepted:true,delivered:0,duplicate:true,matched:true});
+return sendJson(res,409,{accepted:false,error:'transaction_conflict',matched:false})
+}
 if(order){if(order.status!=='paid'&&orderMatchExpired(order))return sendJson(res,410,{error:'order_expired'});if(order.amountFen!==af)return sendJson(res,202,{accepted:true,matched:false});const r=await settleOrder(order,p.paidAt||new Date(now()).toISOString(),tid);return sendJson(res,200,{accepted:true,delivered:r.delivered,duplicate:r.duplicate,matched:true})}
 if(!isTest)return sendJson(res,202,{accepted:true,matched:false,reason:'order_required'});
 const pmt={amountFen:af,paidAt:p.paidAt||new Date(now()).toISOString(),status:'paid',test:isTest};
@@ -247,14 +281,33 @@ const isWx=pkg==='com.tencent.mm';
 const hasTrust=/微信支付|微信收款助手|收款助手/.test(ntfTxt);
 const hasPmt=/收款|到账|支付成功|已支付/.test(ntfTxt);
 const fp=crypto.createHash('sha256').update(payee).update('\0').update(pkg).update('\0').update(ntfTxt).digest('hex');
+const sourceRaw=String(p.receive_time||p.receiveTime||'').trim();
+let sourceTime=NaN;let hasSourceTime=false;
+if(sourceRaw){
+const numeric=Number(sourceRaw);
+if(Number.isFinite(numeric)){
+sourceTime=Math.abs(numeric)<1e11?numeric*1000:numeric;hasSourceTime=true
+}else{
+const parsed=Date.parse(sourceRaw);if(Number.isFinite(parsed)){sourceTime=parsed;hasSourceTime=true}
+}
+}
+if(!Number.isFinite(sourceTime)||!Number.isFinite(new Date(sourceTime).getTime())){sourceTime=tms;hasSourceTime=false}
+const sourceIso=new Date(sourceTime).toISOString();
+const transactionId=hasSourceTime
+?'smsf-'+crypto.createHash('sha256').update('smsf\0').update(payee).update('\0').update(pkg).update('\0').update(ntfTxt).update('\0').update(sourceIso).digest('hex')
+:'smsf-'+crypto.createHash('sha256').update(payee).update('\0').update(pkg).update('\0').update(ntfTxt).update('\0').update(ts).digest('hex');
+const notificationAt=sourceIso;
 const prev=recentSmsF.get(fp);
 const prior=state.smsfEvents.findLast(event=>event.fingerprint===fp);
-const priorIsRecent=prior&&Date.parse(prior.receivedAt)>=now()-notificationReplayWindow;
-const pend=findPending(amts,payee);
+const priorExact=state.smsfEvents.findLast(event=>event.fingerprint===fp&&event.notificationAt===notificationAt);
+const persistedTxn=txnRecords.get(transactionId);
+const baseAudit={amountsFen:amts,fingerprint:fp,notificationAt,packageName:pkg,payee,title:title.slice(0,80)};
+if(isWx&&hasTrust&&hasPmt&&persistedTxn){recordSmsfEvent({...baseAudit,orderId:persistedTxn.orderId||'',matched:true,result:'duplicate'});return sendJson(res,200,{accepted:true,duplicate:true,matched:true})}
+const pend=findPending(amts,payee,sourceTime);
 const matched=isWx&&hasTrust&&hasPmt&&!!pend;
-const audit={amountsFen:amts,fingerprint:fp,notificationAt:new Date(tms).toISOString(),orderId:pend?.id||'',packageName:pkg,payee,title:title.slice(0,80)};
+const audit={...baseAudit,orderId:pend?.id||''};
 if(isWx&&hasTrust&&hasPmt&&prev!==undefined&&Math.abs(tms-prev)<=SMSF_DUP_WIN){recordSmsfEvent({...audit,orderId:prior?.orderId||'',matched:true,result:'duplicate'});return sendJson(res,200,{accepted:true,duplicate:true,matched:true})}
-if(isWx&&hasTrust&&hasPmt&&priorIsRecent&&['no_pending_order','amount_not_found'].includes(prior.result)){recordSmsfEvent({...audit,orderId:'',matched:false,result:prior.result});return sendJson(res,prior.result==='amount_not_found'?422:409,{accepted:false,error:prior.result,matched:false})}
+if(isWx&&hasTrust&&hasPmt&&priorExact&&['no_pending_order','amount_not_found'].includes(priorExact.result)){recordSmsfEvent({...audit,orderId:'',matched:false,result:priorExact.result});return sendJson(res,priorExact.result==='amount_not_found'?422:409,{accepted:false,error:priorExact.result,matched:false})}
 if(!matched){
 if(isWx&&hasTrust&&hasPmt){
 const error=amts.length===0?'amount_not_found':'no_pending_order';
@@ -265,9 +318,8 @@ recordSmsfEvent({...audit,matched:false,result:'ignored'});
 return sendJson(res,200,{accepted:true,matched:false})
 }
 recentSmsF.set(fp,tms);
-const tid='smsf-'+crypto.createHash('sha256').update(payee).update('\0').update(pkg).update('\0').update(ntfTxt).update('\0').update(ts).digest('hex');
-if(txnIds.has(tid)){recordSmsfEvent({...audit,matched:true,result:'duplicate'});return sendJson(res,200,{accepted:true,duplicate:true,matched:true})}
-const r=await settleOrder(pend,new Date(tms).toISOString(),tid);
+if(txnIds.has(transactionId)){recordSmsfEvent({...audit,matched:true,result:'duplicate'});return sendJson(res,200,{accepted:true,duplicate:true,matched:true})}
+const r=await settleOrder(pend,notificationAt,transactionId);
 recordSmsfEvent({...audit,matched:true,result:r.duplicate?'duplicate':'matched'});
 return sendJson(res,200,{accepted:true,delivered:r.delivered,duplicate:r.duplicate,matched:true,orderId:pend.id})
 }
@@ -277,7 +329,7 @@ const order=orderById(id);
 if(!order)return sendJson(res,404,{error:'order_not_found'});
 if(orderIsInactive(order))return sendJson(res,410,{error:'order_inactive'});
 if(order.status==='pending'&&!orderPaymentExpired(order)){
-const collides=state.orders.some(candidate=>candidate.id!==order.id&&orderOccupiesAmount(candidate,orderPayee(order))&&candidate.amountFen===order.amountFen);
+const collides=state.orders.some(candidate=>candidate.id!==order.id&&!candidate.autoMatchDisabledAt&&orderOccupiesAmount(candidate,orderPayee(order))&&candidate.amountFen===order.amountFen);
 if(collides){
 const amountFen=allocateAmountFen(order.baseAmountFen||order.amountFen,orderPayee(order),order.id);
 if(amountFen===null)return sendJson(res,409,{error:'amount_unavailable'});
@@ -286,7 +338,7 @@ order.amountFen=amountFen
 if(!order.updatedAt||collides){order.updatedAt=new Date(now()).toISOString();persist()}
 }
 const payee=orderPayee(order);const user=userByName(state,payee);
-return sendJson(res,200,{...publicOrder(order),payee,payeeDisplayName:user?.displayName||payee,qrcodeReady:!orderPaymentExpired(order)&&!!payeeQrPath(payee),serverTime:new Date(now()).toISOString()})
+return sendJson(res,200,{...publicOrder(order),payee,payeeDisplayName:user?.displayName||payee,qrcodeReady:order.status==='pending'&&!orderPaymentExpired(order)&&!!payeeQrPath(payee),serverTime:new Date(now()).toISOString()})
 }
 
 async function fetchShopOrders(){
@@ -385,7 +437,7 @@ return sendJson(res,200,{qrcode:fn,url:'/qrcodes/'+fn})
 if(url.pathname==='/api/admin/orders'&&req.method==='GET'){
 const shop=await fetchShopOrders();
 const localById=new Map(state.orders.map(o=>[o.id,o]));
-const merged=shop.map(so=>{const po=localById.get(so.id);localById.delete(so.id);const payment=po?publicOrder(po):null;const status=['confirming','expired'].includes(payment?.status)?payment.status:so.status;return{...so,amountFen:payment?.amountFen||so.amountFen,baseAmountFen:payment?.baseAmountFen||so.amountFen,payee:'admin',status,payment}});
+const merged=shop.map(so=>{const po=localById.get(so.id);localById.delete(so.id);const payment=po?publicOrder(po):null;const status=['confirming','expired','inactive'].includes(payment?.status)?payment.status:so.status;return{...so,amountFen:payment?.amountFen||so.amountFen,baseAmountFen:payment?.baseAmountFen||so.amountFen,payee:'admin',status,payment}});
 for(const o of localById.values()){const payment=publicOrder(o);merged.push({amountFen:o.amountFen,baseAmountFen:o.baseAmountFen||o.amountFen,createdAt:o.createdAt,expiresAt:o.expiresAt,id:o.id,source:o.source,status:payment.status,title:o.title,payee:orderPayee(o),payment})}
 merged.sort((a,b)=>Date.parse(b.createdAt||0)-Date.parse(a.createdAt||0));
 const filtered=isSuper?merged:merged.filter(o=>(o.payment?.payee||o.payee||'admin')===curObj.username);
@@ -470,8 +522,9 @@ if(!/^[A-Za-z0-9_-]{16,80}$/.test(cid))return sendJson(res,400,{error:'invalid_c
 if(oid&&!orderById(oid))return sendJson(res,404,{error:'order_not_found'});
 res.writeHead(200,{'Cache-Control':'no-cache, no-transform','Connection':'keep-alive','Content-Type':'text/event-stream; charset=utf-8','X-Accel-Buffering':'no'});res.flushHeaders();
 const co=oid?orderById(oid):null;
+if(co?.status==='paid'){sendEvent(res,'status',publicOrder(co));return res.end()}
 if(orderIsInactive(co)){sendEvent(res,'status',{id:co.id,status:'inactive'});return res.end()}
-if(orderMatchExpired(co)){sendEvent(res,'status',{id:co.id,status:'expired'});return res.end()}
+if(co&&orderMatchExpired(co)){sendEvent(res,'status',{id:co.id,status:'expired'});return res.end()}
 sendEvent(res,'status',co?publicOrder(co):{status:'waiting'});
 const streams=clients.get(cid)||new Set();const stream={orderId:oid,res};streams.add(stream);clients.set(cid,streams);
 const hb=setInterval(()=>res.write(': heartbeat\n\n'),20000);
@@ -486,7 +539,7 @@ let pp=url.pathname.replace(/^\/+/,'');let requested=pp==='admin'?'admin.html':p
 if(requested==='wechat-pay.jpg'){
 let payee=String(url.searchParams.get('user')||'admin').trim().toLowerCase();
 const oid=String(url.searchParams.get('order')||'').toUpperCase();
-if(oid){const order=orderById(oid);if(!order)return sendJson(res,404,{error:'order_not_found'});if(orderIsInactive(order))return sendJson(res,410,{error:'order_inactive'});if(orderPaymentExpired(order))return sendJson(res,410,{error:'order_expired'});payee=orderPayee(order)}
+if(oid){const order=orderById(oid);if(!order)return sendJson(res,404,{error:'order_not_found'});if(orderIsInactive(order))return sendJson(res,410,{error:'order_inactive'});if(order.status==='paid')return sendJson(res,410,{error:'order_paid'});if(orderPaymentExpired(order))return sendJson(res,410,{error:'order_expired'});payee=orderPayee(order)}
 const qrPath=payeeQrPath(payee);if(qrPath)return serveFile(qrPath,res,oid?'no-store':'');
 return sendJson(res,404,{error:'qrcode_not_configured'})}
 return serveStatic(requested,res)}

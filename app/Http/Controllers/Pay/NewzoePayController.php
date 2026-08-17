@@ -82,18 +82,39 @@ class NewzoePayController extends PayController
         }
 
         $payload = json_decode($body, true);
+        if (!is_array($payload)) {
+            return response()->json(['error' => 'invalid_payload'], 400);
+        }
         $orderSN = strtoupper((string) ($payload['orderId'] ?? ''));
-        $amountFen = (int) ($payload['amountFen'] ?? 0);
+        $rawAmountFen = $payload['amountFen'] ?? null;
+        $transactionId = (string) ($payload['transactionId'] ?? '');
         $manualOverride = ($payload['manualOverride'] ?? false) === true;
         $order = $this->orderService->detailOrderSN($orderSN);
         if (!$order) {
             return response()->json(['error' => 'order_not_found'], 404);
+        }
+        if ((!is_int($rawAmountFen) && !is_string($rawAmountFen))
+            || !preg_match('/^[1-9][0-9]*$/', (string) $rawAmountFen)) {
+            return response()->json(['error' => 'invalid_amount'], 422);
+        }
+        $amountFen = (int) $rawAmountFen;
+        $callbackAmount = bcdiv((string) $amountFen, '100', 2);
+        if ($transactionId === '') {
+            return response()->json(['error' => 'transaction_id_required'], 422);
         }
         if (in_array((int) $order->status, [
             Order::STATUS_PENDING,
             Order::STATUS_PROCESSING,
             Order::STATUS_COMPLETED,
         ], true)) {
+            if ((string) $order->trade_no === ''
+                || !hash_equals((string) $order->trade_no, $transactionId)) {
+                return response()->json(['error' => 'transaction_id_conflict'], 409);
+            }
+            if (bccomp((string) $order->actual_price, $callbackAmount, 2) !== 0) {
+                return response()->json(['error' => 'amount_conflict'], 409);
+            }
+
             return response()->json(['accepted' => true, 'duplicate' => true]);
         }
         $paymentWindow = app(NewzoePaymentWindow::class);
@@ -121,8 +142,8 @@ class NewzoePayController extends PayController
         try {
             $this->orderProcessService->completedOrder(
                 $orderSN,
-                (float) bcdiv((string) $amountFen, '100', 2),
-                (string) ($payload['transactionId'] ?? ''),
+                (float) $callbackAmount,
+                $transactionId,
                 $allowExpiredCompletion
             );
             return response()->json(['accepted' => true]);

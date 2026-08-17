@@ -80,6 +80,7 @@ td small{display:block;margin-top:4px;color:#8b948f}
 .status-paid{color:#076c3a;background:#dff7ea}
 .status-completed{color:#225f89;background:#e2f2ff}
 .status-expired{color:#6b7270;background:#ecefed}
+.status-inactive{color:#8a3f00;background:#fff0e6}
 .table-link{color:#078f49;font-weight:700;text-decoration:none}
 .table-actions{display:flex;align-items:center;gap:10px}
 .mobile-order-actions{display:none}

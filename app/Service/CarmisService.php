@@ -31,6 +31,8 @@ class CarmisService
         $carmis = Carmis::query()
             ->where('goods_id', $goodsID)
             ->where('status', Carmis::STATUS_UNSOLD)
+            ->orderBy('id')
+            ->lockForUpdate()
             ->take($byAmount)
             ->get();
         return $carmis ? $carmis->toArray() : null;
@@ -40,15 +42,23 @@ class CarmisService
      * 通过id集合设置卡密已售出
      *
      * @param array $ids 卡密id集合
-     * @return bool
+     * @return int
      *
      * @author    assimon<ashang@utf8.hk>
      * @copyright assimon<ashang@utf8.hk>
      * @link      http://utf8.hk/
      */
-    public function soldByIDS(array $ids): bool
+    public function soldByIDS(array $ids): int
     {
-        return Carmis::query()->whereIn('id', $ids)->where('is_loop', 0)->update(['status' => Carmis::STATUS_SOLD]);
+        if (!$ids) {
+            return 0;
+        }
+
+        return Carmis::query()
+            ->whereIn('id', $ids)
+            ->where('is_loop', 0)
+            ->where('status', Carmis::STATUS_UNSOLD)
+            ->update(['status' => Carmis::STATUS_SOLD]);
     }
 
 }

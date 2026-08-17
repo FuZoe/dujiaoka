@@ -246,7 +246,11 @@ async function start() {
 
   events.addEventListener('status', (event) => {
     const current = JSON.parse(event.data);
-    if (current.status === 'inactive' || current.status === 'expired') {
+    if (current.status === 'paid') {
+      if (order) Object.assign(order, current, { status: 'paid' });
+      events.close();
+      showSuccess(current);
+    } else if (current.status === 'inactive' || current.status === 'expired') {
       events.close();
       expireCheckout();
     } else if (current.status === 'confirming') {

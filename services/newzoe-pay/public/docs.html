@@ -88,7 +88,7 @@ ul,ol{padding-left:20px}
 <table style="width:100%;border-collapse:collapse;margin-top:8px">
 <tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650;width:130px">请求方式</td><td style="padding:8px 12px;border:1px solid #dfe4e1"><code>POST</code></td></tr>
 <tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">Webhook URL</td><td style="padding:8px 12px;border:1px solid #dfe4e1"><div class="config-value"><code id="doc-webhook">从当前商户后台获取</code><button class="copy-config" type="button" data-copy-target="doc-webhook" hidden>复制</button></div></td></tr>
-<tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">消息模板</td><td style="padding:8px 12px;border:1px solid #dfe4e1"><code>from=[from]&amp;content=[msg]&amp;title=[title]&amp;timestamp=[timestamp]&amp;sign=[sign]</code></td></tr>
+<tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">消息模板</td><td style="padding:8px 12px;border:1px solid #dfe4e1"><code>from=[from]&amp;content=[msg]&amp;title=[title]&amp;timestamp=[timestamp]&amp;receive_time=[receive_time]&amp;sign=[sign]</code></td></tr>
 <tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">签名 Secret</td><td style="padding:8px 12px;border:1px solid #dfe4e1"><div class="config-value"><code id="doc-secret">从当前商户后台获取</code><button class="copy-config" type="button" data-copy-target="doc-secret" hidden>复制</button></div></td></tr>
 <tr><td style="padding:8px 12px;border:1px solid #dfe4e1;font-weight:650">成功应答关键字</td><td style="padding:8px 12px;border:1px solid #dfe4e1">留空</td></tr>
 </table>
@@ -160,7 +160,7 @@ ul,ol{padding-left:20px}
 <ul>
 <li>Webhook URL 是否填写正确（注意不要多空格）</li>
 <li>手机是否能正常访问外网（用浏览器打开 https://pay.newzoe.cloud 试试）</li>
-<li>消息模板是否完整保留 <code>[from]</code>、<code>[msg]</code>、<code>[title]</code>、<code>[timestamp]</code> 和 <code>[sign]</code></li>
+<li>消息模板是否完整保留 <code>[from]</code>、<code>[msg]</code>、<code>[title]</code>、<code>[timestamp]</code>、可选的 <code>[receive_time]</code> 和 <code>[sign]</code></li>
 <li>查看 SmsForwarder 的转发日志，看是否有错误提示</li>
 </ul>
 </div>

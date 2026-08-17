@@ -146,8 +146,12 @@ class NewzoePaymentLifecycleTest extends TestCase
 
         $carmis = Mockery::mock();
         $carmis->shouldReceive('withGoodsByAmountAndStatusUnsold')
-            ->once()->with(1, 1)->andReturn([['id' => 11, 'carmi' => 'CARD-CODE']]);
-        $carmis->shouldReceive('soldByIDS')->once()->with([11]);
+            ->once()->with(1, 1)->andReturn([[
+                'id' => 11,
+                'carmi' => 'CARD-CODE',
+                'is_loop' => 0,
+            ]]);
+        $carmis->shouldReceive('soldByIDS')->once()->with([11])->andReturn(1);
         $emailTemplates = Mockery::mock();
         $emailTemplates->shouldReceive('detailByToken')
             ->once()->with('card_send_user_email')->andReturn([
@@ -228,6 +232,161 @@ class NewzoePaymentLifecycleTest extends TestCase
 
         $this->assertSame(Order::STATUS_PENDING, (int) $order->fresh()->status);
         $this->assertSame('', (string) $order->fresh()->trade_no);
+        $this->assertSame(0, DB::transactionLevel());
+    }
+
+    /**
+     * @dataProvider processedOrderStatusProvider
+     */
+    public function test_processed_order_accepts_only_an_exact_callback_replay(int $status): void
+    {
+        $createdAt = Carbon::parse('2026-08-17 12:00:00');
+        $order = $this->inMemoryOrder($createdAt, $status);
+        $order->trade_no = 'EXACT-REPLAY-1';
+        $processor = Mockery::mock();
+        $processor->shouldNotReceive('completedOrder');
+
+        $response = $this->controllerFor($order, $processor)->notifyUrl($this->signedRequest([
+            'orderId' => $order->order_sn,
+            'amountFen' => 401,
+            'transactionId' => 'EXACT-REPLAY-1',
+        ]));
+
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame(
+            ['accepted' => true, 'duplicate' => true],
+            $response->getData(true)
+        );
+    }
+
+    public function test_processed_order_rejects_a_callback_without_a_transaction_id(): void
+    {
+        $order = $this->processedInMemoryOrder();
+        $processor = Mockery::mock();
+        $processor->shouldNotReceive('completedOrder');
+
+        $response = $this->controllerFor($order, $processor)->notifyUrl($this->signedRequest([
+            'orderId' => $order->order_sn,
+            'amountFen' => 401,
+        ]));
+
+        $this->assertSame(422, $response->getStatusCode());
+        $this->assertSame(['error' => 'transaction_id_required'], $response->getData(true));
+    }
+
+    public function test_waiting_order_requires_a_transaction_id_before_fulfilment(): void
+    {
+        $order = $this->inMemoryOrder(Carbon::parse('2026-08-17 12:00:00'));
+        $processor = Mockery::mock();
+        $processor->shouldNotReceive('completedOrder');
+
+        $response = $this->controllerFor($order, $processor)->notifyUrl($this->signedRequest([
+            'orderId' => $order->order_sn,
+            'amountFen' => 401,
+        ]));
+
+        $this->assertSame(422, $response->getStatusCode());
+        $this->assertSame(['error' => 'transaction_id_required'], $response->getData(true));
+    }
+
+    public function test_callback_rejects_a_non_integer_fen_amount(): void
+    {
+        $order = $this->inMemoryOrder(Carbon::parse('2026-08-17 12:00:00'));
+        $processor = Mockery::mock();
+        $processor->shouldNotReceive('completedOrder');
+
+        $response = $this->controllerFor($order, $processor)->notifyUrl($this->signedRequest([
+            'orderId' => $order->order_sn,
+            'amountFen' => '401.5',
+            'transactionId' => 'INVALID-AMOUNT-TRANSACTION',
+        ]));
+
+        $this->assertSame(422, $response->getStatusCode());
+        $this->assertSame(['error' => 'invalid_amount'], $response->getData(true));
+    }
+
+    public function test_processed_order_rejects_a_different_transaction_id(): void
+    {
+        $order = $this->processedInMemoryOrder();
+        $processor = Mockery::mock();
+        $processor->shouldNotReceive('completedOrder');
+
+        $response = $this->controllerFor($order, $processor)->notifyUrl($this->signedRequest([
+            'orderId' => $order->order_sn,
+            'amountFen' => 401,
+            'transactionId' => 'DIFFERENT-TRANSACTION-2',
+        ]));
+
+        $this->assertSame(409, $response->getStatusCode());
+        $this->assertSame(['error' => 'transaction_id_conflict'], $response->getData(true));
+    }
+
+    public function test_processed_order_rejects_a_different_amount(): void
+    {
+        $order = $this->processedInMemoryOrder();
+        $processor = Mockery::mock();
+        $processor->shouldNotReceive('completedOrder');
+
+        $response = $this->controllerFor($order, $processor)->notifyUrl($this->signedRequest([
+            'orderId' => $order->order_sn,
+            'amountFen' => 402,
+            'transactionId' => $order->trade_no,
+        ]));
+
+        $this->assertSame(409, $response->getStatusCode());
+        $this->assertSame(['error' => 'amount_conflict'], $response->getData(true));
+    }
+
+    public function test_card_claim_count_mismatch_rolls_back_order_completion(): void
+    {
+        $createdAt = Carbon::parse('2026-08-17 12:00:00');
+        $order = $this->storedNewzoeOrder($createdAt);
+        $this->buildFulfilmentTables();
+        DB::table('goods')->insert([
+            'id' => 1,
+            'gd_name' => 'Contended product',
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
+        ]);
+        DB::table('orders')->where('id', $order->id)->update(['goods_id' => 1]);
+
+        $carmis = Mockery::mock();
+        $carmis->shouldReceive('withGoodsByAmountAndStatusUnsold')
+            ->once()->with(1, 1)->andReturn([[
+                'id' => 11,
+                'carmi' => 'CONTENDED-CARD',
+                'is_loop' => 0,
+            ]]);
+        $carmis->shouldReceive('soldByIDS')->once()->with([11])->andReturn(0);
+        $emailTemplates = Mockery::mock();
+        $emailTemplates->shouldNotReceive('detailByToken');
+        $goods = Mockery::mock();
+        $goods->shouldNotReceive('salesVolumeIncr');
+        $telegram = Mockery::mock();
+        $telegram->shouldNotReceive('queuePaid');
+        $telegram->shouldNotReceive('queueStatus');
+
+        $this->app->instance('Service\\CouponService', Mockery::mock());
+        $this->app->instance('Service\\OrderService', Mockery::mock());
+        $this->app->instance('Service\\CarmisService', $carmis);
+        $this->app->instance('Service\\EmailtplService', $emailTemplates);
+        $this->app->instance('Service\\GoodsService', $goods);
+        $this->app->instance(TelegramOrderNotificationService::class, $telegram);
+
+        try {
+            (new OrderProcessService())->completedOrder(
+                $order->order_sn,
+                4.01,
+                'CONTENDED-TRANSACTION-1'
+            );
+            $this->fail('A partial card claim must abort order completion.');
+        } catch (RuleValidationException $exception) {
+            $this->assertStringContainsString('卡密库存已被其他订单占用', $exception->getMessage());
+        }
+
+        $persisted = $order->fresh();
+        $this->assertSame(Order::STATUS_WAIT_PAY, (int) $persisted->status);
+        $this->assertSame('', (string) $persisted->trade_no);
         $this->assertSame(0, DB::transactionLevel());
     }
 
@@ -492,6 +651,26 @@ class NewzoePaymentLifecycleTest extends TestCase
         $order->created_at = $createdAt;
 
         return $order;
+    }
+
+    private function processedInMemoryOrder(): Order
+    {
+        $order = $this->inMemoryOrder(
+            Carbon::parse('2026-08-17 12:00:00'),
+            Order::STATUS_COMPLETED
+        );
+        $order->trade_no = 'ORIGINAL-TRANSACTION-1';
+
+        return $order;
+    }
+
+    public function processedOrderStatusProvider(): array
+    {
+        return [
+            'pending' => [Order::STATUS_PENDING],
+            'processing' => [Order::STATUS_PROCESSING],
+            'completed' => [Order::STATUS_COMPLETED],
+        ];
     }
 
     private function controllerFor(Order $order, $processor): NewzoePayController

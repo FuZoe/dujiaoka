@@ -543,12 +543,17 @@ class OrderProcessService
             return $order;
         }
         $carmisInfo = array_column($carmis, 'carmi');
-        $ids = array_column($carmis, 'id');
+        $singleUseIds = array_column(array_filter($carmis, function (array $carmi) {
+            return !(int) ($carmi['is_loop'] ?? 0);
+        }), 'id');
+        $soldCount = $this->carmisService->soldByIDS($singleUseIds);
+        if ($soldCount !== count($singleUseIds)) {
+            throw new \RuntimeException('卡密库存已被其他订单占用，请重试');
+        }
+
         $order->info = implode(PHP_EOL, $carmisInfo);
         $order->status = Order::STATUS_COMPLETED;
         $order->save();
-        // 将卡密设置为已售出
-        $this->carmisService->soldByIDS($ids);
         // 邮件数据
         $mailData = [
             'created_at' => $order->create_at,

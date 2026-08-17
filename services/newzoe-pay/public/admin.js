@@ -36,11 +36,11 @@ function esc(v) { return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&am
 
 function normStatus(o) {
   const s = o.payment?.status || o.status;
-  if (["completed", "paid", "pending", "confirming", "expired"].includes(s)) return s;
+  if (["completed", "paid", "pending", "confirming", "expired", "inactive"].includes(s)) return s;
   const c = Number(s);
   return ({ "-1": "expired", 1: "pending", 2: "paid", 3: "paid", 4: "completed" })[c] || "pending";
 }
-const statusMap = { pending: "待支付", confirming: "到账确认中", paid: "已支付", completed: "已完成", expired: "已过期" };
+const statusMap = { pending: "待支付", confirming: "到账确认中", paid: "已支付", completed: "已完成", expired: "已过期", inactive: "需重新登记" };
 const smsfResultMap = { matched: "已匹配", duplicate: "重复通知", no_pending_order: "没有同金额待支付订单", amount_not_found: "未识别到金额", ignored: "已忽略" };
 const callbackStatusMap = { success: "卡网已发货", waiting: "等待卡网回调", processing: "卡网回调处理中", manual_fulfilled: "人工已发货", error: "卡网回调失败" };
 function callbackStatusLabel(status) { return status.startsWith("http_") ? "卡网回调失败" : (callbackStatusMap[status] || status); }
