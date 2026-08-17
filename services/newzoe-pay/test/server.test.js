@@ -15,13 +15,16 @@ const NOW = Date.UTC(2026, 7, 11, 8, 0, 0);
 
 async function withServer(run, options = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'newzoe-pay-'));
+  const stateFile = options.stateFile || path.join(directory, 'state.json');
+  if (options.initialState) fs.writeFileSync(stateFile, JSON.stringify(options.initialState));
+  const { initialState, ...serverOptions } = options;
   const server = createPayServer({
     now: () => NOW,
     secret: SECRET,
     smsfSecret: SMSF_SECRET,
     shopSecret: SHOP_SECRET,
-    stateFile: path.join(directory, 'state.json'),
-    ...options
+    stateFile,
+    ...serverOptions
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   try {
@@ -199,8 +202,73 @@ test('SmsForwarder matches delayed notifications for orders activated within 24 
   });
 });
 
-test('same-amount orders settle FIFO while duplicate forwarding settles only once', async () => {
+test('the first checkout visit persists its activation window across a restart', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'newzoe-pay-restart-'));
+  const stateFile = path.join(directory, 'state.json');
+  let clock = NOW - 23 * 60 * 60 * 1000;
+  let server;
+  const start = async () => {
+    server = createPayServer({
+      fetchImpl: async () => ({ ok: true, status: 200 }),
+      now: () => clock,
+      secret: SECRET,
+      smsfSecret: SMSF_SECRET,
+      shopSecret: SHOP_SECRET,
+      stateFile
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    return `http://127.0.0.1:${server.address().port}`;
+  };
+  const stop = async () => {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    server = null;
+  };
+
+  try {
+    let baseUrl = await start();
+    const orderBody = JSON.stringify({
+      amountFen: 600,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      orderId: 'RESTARTACTIVE01',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/RESTARTACTIVE01',
+      title: '重启激活时间测试'
+    });
+    const createTimestamp = String(clock);
+    const created = await fetch(`${baseUrl}/api/shop/orders`, {
+      body: orderBody,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, createTimestamp, Buffer.from(orderBody)),
+        'x-shop-timestamp': createTimestamp
+      },
+      method: 'POST'
+    });
+    assert.equal(created.status, 201);
+
+    clock = NOW;
+    const opened = await fetch(`${baseUrl}/api/orders/RESTARTACTIVE01`);
+    assert.equal(opened.status, 200);
+    await stop();
+    const persisted = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    assert.equal(persisted.orders[0].activatedAt, new Date(NOW).toISOString());
+
+    baseUrl = await start();
+    clock = NOW + 23.5 * 60 * 60 * 1000;
+    const paid = await fetch(`${baseUrl}/api/smsf/notify`, {
+      body: smsfForm({ content: '微信支付收款到账6.00元', from: 'com.tencent.mm', title: '微信支付' }, String(clock)),
+      method: 'POST'
+    });
+    assert.equal(paid.status, 200);
+    assert.equal((await paid.json()).orderId, 'RESTARTACTIVE01');
+  } finally {
+    await stop();
+    fs.rmSync(directory, { force: true, recursive: true });
+  }
+});
+
+test('same-price orders receive unique payable amounts and match independently', async () => {
   let clock = NOW;
+  const callbacks = [];
   await withServer(async (baseUrl) => {
     const create = async (orderId) => {
       const body = JSON.stringify({
@@ -211,7 +279,7 @@ test('same-amount orders settle FIFO while duplicate forwarding settles only onc
         title: orderId
       });
       const timestamp = String(clock);
-      await fetch(`${baseUrl}/api/shop/orders`, {
+      const response = await fetch(`${baseUrl}/api/shop/orders`, {
         body,
         headers: {
           'content-type': 'application/json',
@@ -220,34 +288,303 @@ test('same-amount orders settle FIFO while duplicate forwarding settles only onc
         },
         method: 'POST'
       });
+      const created = await response.json();
       await fetch(`${baseUrl}/api/orders/${orderId}`);
       clock += 1000;
+      return created.order;
     };
-    await create('FIFOORDER0001');
-    await create('FIFOORDER0002');
+    const firstOrder = await create('UNIQUEORDER001');
+    const secondOrder = await create('UNIQUEORDER002');
+    assert.equal(firstOrder.baseAmountFen, 100);
+    assert.equal(firstOrder.amountFen, 100);
+    assert.equal(secondOrder.baseAmountFen, 100);
+    assert.equal(secondOrder.amountFen, 101);
 
-    // Refreshing the first checkout must not move it behind the second order.
-    clock += 1000;
-    await fetch(`${baseUrl}/api/orders/FIFOORDER0001`);
-
-    const firstFields = { content: '微信支付收款到账1.00元，今日第1笔', from: 'com.tencent.mm', title: '微信支付' };
-    const first = await fetch(`${baseUrl}/api/smsf/notify`, { body: smsfForm(firstFields, String(clock)), method: 'POST' });
-    assert.equal((await first.json()).orderId, 'FIFOORDER0001');
-
-    clock += 25;
-    const duplicate = await fetch(`${baseUrl}/api/smsf/notify`, { body: smsfForm(firstFields, String(clock)), method: 'POST' });
-    assert.deepEqual(await duplicate.json(), { accepted: true, duplicate: true, matched: true });
-    assert.equal((await (await fetch(`${baseUrl}/api/orders/FIFOORDER0002`)).json()).status, 'pending');
-
-    clock += 6000;
-    const second = await fetch(`${baseUrl}/api/smsf/notify`, {
-      body: smsfForm({ content: '微信支付收款到账1.00元，今日第2笔', from: 'com.tencent.mm', title: '微信支付' }, String(clock)),
+    const repeatBody = JSON.stringify({
+      amountFen: 100,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      orderId: 'UNIQUEORDER002',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/UNIQUEORDER002',
+      title: 'UNIQUEORDER002'
+    });
+    const repeatTimestamp = String(clock);
+    const repeat = await fetch(`${baseUrl}/api/shop/orders`, {
+      body: repeatBody,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, repeatTimestamp, Buffer.from(repeatBody)),
+        'x-shop-timestamp': repeatTimestamp
+      },
       method: 'POST'
     });
-    assert.equal((await second.json()).orderId, 'FIFOORDER0002');
+    assert.equal(repeat.status, 200);
+    assert.equal((await repeat.json()).order.amountFen, 101);
+
+    const secondPayment = await fetch(`${baseUrl}/api/smsf/notify`, {
+      body: smsfForm({ content: '微信支付收款到账1.01元，唯一金额第二笔', from: 'com.tencent.mm', title: '微信支付' }, String(clock)),
+      method: 'POST'
+    });
+    assert.equal((await secondPayment.json()).orderId, 'UNIQUEORDER002');
+
+    clock += 1000;
+    const firstPayment = await fetch(`${baseUrl}/api/smsf/notify`, {
+      body: smsfForm({ content: '微信支付收款到账1.00元，唯一金额第一笔', from: 'com.tencent.mm', title: '微信支付' }, String(clock)),
+      method: 'POST'
+    });
+    assert.equal((await firstPayment.json()).orderId, 'UNIQUEORDER001');
+
+    assert.equal(callbacks.length, 2);
+    const secondCallback = JSON.parse(callbacks[0].request.body);
+    assert.equal(secondCallback.amountFen, 100);
+    assert.equal(secondCallback.paidAmountFen, 101);
+    const firstCallback = JSON.parse(callbacks[1].request.body);
+    assert.equal(firstCallback.amountFen, 100);
+    assert.equal(firstCallback.paidAmountFen, 100);
+
+    clock += 1000;
+    const heldOrder = await create('UNIQUEORDER003');
+    assert.equal(heldOrder.amountFen, 102);
+
+    clock += 25 * 60 * 60 * 1000;
+    const reusedOrder = await create('UNIQUEORDER004');
+    assert.equal(reusedOrder.amountFen, 100);
+
+    const renewedOrder = await create('UNIQUEORDER003');
+    assert.equal(renewedOrder.amountFen, 101);
+  }, {
+    fetchImpl: async (url, request) => {
+      callbacks.push({ request, url });
+      return { ok: true, status: 200 };
+    },
+    now: () => clock
+  });
+});
+
+test('concurrent same-price registrations allocate distinct cents atomically', async () => {
+  await withServer(async (baseUrl) => {
+    const create = async (index) => {
+      const body = JSON.stringify({
+        amountFen: 500,
+        callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+        orderId: `CONCURRENT${String(index).padStart(3, '0')}`,
+        returnUrl: `https://shop.newzoe.cloud/detail-order-sn/CONCURRENT${String(index).padStart(3, '0')}`,
+        title: `并发订单 ${index}`
+      });
+      const timestamp = String(NOW);
+      const response = await fetch(`${baseUrl}/api/shop/orders`, {
+        body,
+        headers: {
+          'content-type': 'application/json',
+          'x-shop-signature': signPayload(SHOP_SECRET, timestamp, Buffer.from(body)),
+          'x-shop-timestamp': timestamp
+        },
+        method: 'POST'
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).order.amountFen;
+    };
+
+    const amounts = await Promise.all(Array.from({ length: 8 }, (_, index) => create(index)));
+    assert.deepEqual([...amounts].sort((a, b) => a - b), [500, 501, 502, 503, 504, 505, 506, 507]);
+  });
+});
+
+test('a recently settled disabled order still reserves its paid amount', async () => {
+  await withServer(async (baseUrl) => {
+    const body = JSON.stringify({
+      amountFen: 250,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      orderId: 'AFTERDISABLED01',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/AFTERDISABLED01',
+      title: '隔离订单后的同价订单'
+    });
+    const timestamp = String(NOW);
+    const response = await fetch(`${baseUrl}/api/shop/orders`, {
+      body,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, timestamp, Buffer.from(body)),
+        'x-shop-timestamp': timestamp
+      },
+      method: 'POST'
+    });
+    assert.equal(response.status, 201);
+    assert.equal((await response.json()).order.amountFen, 251);
+  }, {
+    initialState: {
+      orders: [{
+        amountFen: 250,
+        autoMatchDisabledAt: new Date(NOW - 1000).toISOString(),
+        baseAmountFen: 250,
+        createdAt: new Date(NOW - 60000).toISOString(),
+        id: 'DISABLEDPAID01',
+        paidAt: new Date(NOW - 1000).toISOString(),
+        payee: 'admin',
+        settledAt: new Date(NOW - 1000).toISOString(),
+        source: 'dujiaoka',
+        status: 'paid'
+      }],
+      transactions: [],
+      users: []
+    }
+  });
+});
+
+test('a recently disabled pending order keeps its amount quarantined', async () => {
+  await withServer(async (baseUrl) => {
+    const body = JSON.stringify({
+      amountFen: 350,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      orderId: 'AFTERINACTIVE01',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/AFTERINACTIVE01',
+      title: '失效订单后的同价订单'
+    });
+    const timestamp = String(NOW);
+    const response = await fetch(`${baseUrl}/api/shop/orders`, {
+      body,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, timestamp, Buffer.from(body)),
+        'x-shop-timestamp': timestamp
+      },
+      method: 'POST'
+    });
+    assert.equal(response.status, 201);
+    assert.equal((await response.json()).order.amountFen, 351);
+  }, {
+    initialState: {
+      orders: [{
+        activatedAt: new Date(NOW - 60000).toISOString(),
+        amountFen: 350,
+        autoMatchDisabledAt: new Date(NOW - 1000).toISOString(),
+        baseAmountFen: 350,
+        createdAt: new Date(NOW - 60000).toISOString(),
+        id: 'INACTIVEPENDING',
+        payee: 'admin',
+        source: 'dujiaoka',
+        status: 'pending'
+      }],
+      transactions: [],
+      users: []
+    }
+  });
+});
+
+test('a disabled pending order stays closed until signed shop re-registration reactivates it with a unique amount', async () => {
+  await withServer(async (baseUrl) => {
+    const closed = await fetch(`${baseUrl}/api/orders/DISABLEDORDER01`);
+    assert.equal(closed.status, 410);
+    assert.deepEqual(await closed.json(), { error: 'order_inactive' });
+
+    const qr = await fetch(`${baseUrl}/wechat-pay.jpg?order=DISABLEDORDER01`);
+    assert.equal(qr.status, 410);
+    assert.deepEqual(await qr.json(), { error: 'order_inactive' });
+
+    const events = await fetch(`${baseUrl}/api/events?client=inactiveclient123456&order=DISABLEDORDER01`);
+    assert.equal(events.status, 200);
+    const eventBody = await events.text();
+    assert.match(eventBody, /event: status/);
+    assert.match(eventBody, /"status":"inactive"/);
+
+    const body = JSON.stringify({
+      amountFen: 500,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      orderId: 'DISABLEDORDER01',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/DISABLEDORDER01',
+      title: '重新激活订单'
+    });
+    const timestamp = String(NOW);
+    const registered = await fetch(`${baseUrl}/api/shop/orders`, {
+      body,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, timestamp, Buffer.from(body)),
+        'x-shop-timestamp': timestamp
+      },
+      method: 'POST'
+    });
+    assert.equal(registered.status, 200);
+    const reactivated = (await registered.json()).order;
+    assert.equal(reactivated.baseAmountFen, 500);
+    assert.equal(reactivated.amountFen, 501);
+
+    const opened = await fetch(`${baseUrl}/api/orders/DISABLEDORDER01`);
+    assert.equal(opened.status, 200);
+    assert.equal((await opened.json()).status, 'pending');
+
+    const paid = await fetch(`${baseUrl}/api/smsf/notify`, {
+      body: smsfForm({ content: '微信支付收款到账5.01元', from: 'com.tencent.mm', title: '微信支付' }),
+      method: 'POST'
+    });
+    assert.equal(paid.status, 200);
+    assert.equal((await paid.json()).orderId, 'DISABLEDORDER01');
   }, {
     fetchImpl: async () => ({ ok: true, status: 200 }),
-    now: () => clock
+    initialState: {
+      orders: [
+        {
+          activatedAt: new Date(NOW - 60000).toISOString(),
+          amountFen: 500,
+          baseAmountFen: 500,
+          createdAt: new Date(NOW - 60000).toISOString(),
+          id: 'ACTIVEPENDING01',
+          payee: 'admin',
+          source: 'dujiaoka',
+          status: 'pending'
+        },
+        {
+          activatedAt: new Date(NOW - 120000).toISOString(),
+          amountFen: 500,
+          autoMatchDisabledAt: new Date(NOW - 30000).toISOString(),
+          baseAmountFen: 500,
+          createdAt: new Date(NOW - 120000).toISOString(),
+          id: 'DISABLEDORDER01',
+          payee: 'admin',
+          source: 'dujiaoka',
+          status: 'pending'
+        }
+      ],
+      transactions: [],
+      users: []
+    }
+  });
+});
+
+test('opening a legacy colliding pending order repairs its payable amount', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/orders/LEGACYPENDING01`);
+    assert.equal(response.status, 200);
+    const order = await response.json();
+    assert.equal(order.baseAmountFen, 13500);
+    assert.equal(order.amountFen, 13501);
+  }, {
+    initialState: {
+      orders: [
+        {
+          amountFen: 13500,
+          baseAmountFen: 13500,
+          createdAt: new Date(NOW - 180000).toISOString(),
+          id: 'LEGACYPAID0001',
+          paidAt: new Date(NOW - 60000).toISOString(),
+          payee: 'admin',
+          settledAt: new Date(NOW - 60000).toISOString(),
+          source: 'dujiaoka',
+          status: 'paid'
+        },
+        {
+          activatedAt: new Date(NOW - 120000).toISOString(),
+          amountFen: 13500,
+          baseAmountFen: 13500,
+          createdAt: new Date(NOW - 120000).toISOString(),
+          id: 'LEGACYPENDING01',
+          payee: 'admin',
+          source: 'dujiaoka',
+          status: 'pending'
+        }
+      ],
+      transactions: [],
+      users: []
+    }
   });
 });
 
@@ -411,14 +748,251 @@ test('admin can sign in and create a custom amount order', async () => {
     assert.equal(createResponse.status, 201);
     const created = await createResponse.json();
     assert.equal(created.order.amountFen, 1234);
+    assert.equal(created.order.baseAmountFen, 1234);
     assert.match(created.paymentUrl, /^https:\/\/pay\.newzoe\.cloud\/M/);
+
+    const secondCreateResponse = await fetch(`${baseUrl}/api/admin/orders`, {
+      body: JSON.stringify({ amount: '12.34', title: '同价线下补款' }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    assert.equal(secondCreateResponse.status, 201);
+    const secondCreated = await secondCreateResponse.json();
+    assert.equal(secondCreated.order.baseAmountFen, 1234);
+    assert.equal(secondCreated.order.amountFen, 1235);
 
     const ordersResponse = await fetch(`${baseUrl}/api/admin/orders`, { headers: { cookie } });
     const orders = (await ordersResponse.json()).orders;
-    assert.equal(orders.length, 1);
+    assert.equal(orders.length, 2);
     assert.equal(orders[0].status, 'pending');
   }, {
     adminPassword: 'test-admin-password',
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters'
+  });
+});
+
+test('admin manual payment can trigger shop fulfillment or permanently suppress it', async () => {
+  const callbacks = [];
+  await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+
+    const createShopOrder = async (orderId) => {
+      const body = JSON.stringify({
+        amountFen: 700,
+        callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+        orderId,
+        returnUrl: `https://shop.newzoe.cloud/detail-order-sn/${orderId}`,
+        title: orderId
+      });
+      const timestamp = String(NOW);
+      const response = await fetch(`${baseUrl}/api/shop/orders`, {
+        body,
+        headers: {
+          'content-type': 'application/json',
+          'x-shop-signature': signPayload(SHOP_SECRET, timestamp, Buffer.from(body)),
+          'x-shop-timestamp': timestamp
+        },
+        method: 'POST'
+      });
+      assert.equal(response.status, 201);
+      return (await response.json()).order;
+    };
+
+    const suppressedOrder = await createShopOrder('MANUALSKIP001');
+    assert.equal(suppressedOrder.amountFen, 700);
+    const suppressedResponse = await fetch(`${baseUrl}/api/admin/orders/MANUALSKIP001/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: false }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    assert.equal(suppressedResponse.status, 200);
+    const suppressed = await suppressedResponse.json();
+    assert.equal(suppressed.order.status, 'paid');
+    assert.equal(suppressed.order.callbackStatus, 'manual_fulfilled');
+    assert.equal(suppressed.order.manualPaidBy, 'admin');
+    assert.equal(suppressed.order.paymentMethod, 'manual_admin');
+    assert.equal(suppressed.shopFulfillmentTriggered, false);
+    assert.equal(callbacks.length, 0);
+
+    const duplicateResponse = await fetch(`${baseUrl}/api/admin/orders/MANUALSKIP001/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: true }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    assert.equal(duplicateResponse.status, 200);
+    assert.equal((await duplicateResponse.json()).duplicate, true);
+    assert.equal(callbacks.length, 0);
+
+    const fulfilledOrder = await createShopOrder('MANUALSHIP002');
+    assert.equal(fulfilledOrder.baseAmountFen, 700);
+    assert.equal(fulfilledOrder.amountFen, 701);
+    const fulfilledResponse = await fetch(`${baseUrl}/api/admin/orders/MANUALSHIP002/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: true }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    assert.equal(fulfilledResponse.status, 200);
+    const fulfilled = await fulfilledResponse.json();
+    assert.equal(fulfilled.order.status, 'paid');
+    assert.equal(fulfilled.order.callbackStatus, 'success');
+    assert.equal(fulfilled.shopFulfillmentTriggered, true);
+    assert.equal(callbacks.length, 1);
+    const callback = JSON.parse(callbacks[0].request.body);
+    assert.equal(callback.amountFen, 700);
+    assert.equal(callback.paidAmountFen, 701);
+    assert.equal(callback.orderId, 'MANUALSHIP002');
+  }, {
+    adminPassword: 'test-admin-password',
+    fetchImpl: async (url, request) => {
+      callbacks.push({ request, url });
+      return { ok: true, status: 200 };
+    },
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters'
+  });
+});
+
+test('failed shop fulfillment can be retried without settling the order twice', async () => {
+  const callbacks = [];
+  await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+    const orderBody = JSON.stringify({
+      amountFen: 900,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      orderId: 'CALLBACKRETRY01',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/CALLBACKRETRY01',
+      title: '回调重试订单'
+    });
+    const timestamp = String(NOW);
+    await fetch(`${baseUrl}/api/shop/orders`, {
+      body: orderBody,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, timestamp, Buffer.from(orderBody)),
+        'x-shop-timestamp': timestamp
+      },
+      method: 'POST'
+    });
+
+    const crossOrigin = await fetch(`${baseUrl}/api/admin/orders/CALLBACKRETRY01/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: true }),
+      headers: { 'content-type': 'application/json', cookie, origin: 'https://shop.newzoe.cloud' },
+      method: 'POST'
+    });
+    assert.equal(crossOrigin.status, 403);
+    assert.deepEqual(await crossOrigin.json(), { error: 'invalid_origin' });
+
+    const wrongContentType = await fetch(`${baseUrl}/api/admin/orders/CALLBACKRETRY01/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: true }),
+      headers: { 'content-type': 'text/plain', cookie },
+      method: 'POST'
+    });
+    assert.equal(wrongContentType.status, 415);
+    assert.deepEqual(await wrongContentType.json(), { error: 'invalid_content_type' });
+
+    const firstResponse = await fetch(`${baseUrl}/api/admin/orders/CALLBACKRETRY01/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: true }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    const first = await firstResponse.json();
+    assert.equal(first.order.status, 'paid');
+    assert.equal(first.order.callbackStatus, 'http_503');
+    assert.equal(callbacks.length, 1);
+
+    const retryResponse = await fetch(`${baseUrl}/api/admin/orders/CALLBACKRETRY01/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: true }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    const retried = await retryResponse.json();
+    assert.equal(retried.duplicate, true);
+    assert.equal(retried.shopFulfillmentRetried, true);
+    assert.equal(retried.order.callbackStatus, 'success');
+    assert.equal(callbacks.length, 2);
+
+    const completedRetry = await fetch(`${baseUrl}/api/admin/orders/CALLBACKRETRY01/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: true }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    const completed = await completedRetry.json();
+    assert.equal(completed.shopFulfillmentRetried, false);
+    assert.equal(callbacks.length, 2);
+  }, {
+    adminPassword: 'test-admin-password',
+    fetchImpl: async (url, request) => {
+      callbacks.push({ request, url });
+      return callbacks.length === 1 ? { ok: false, status: 503 } : { ok: true, status: 200 };
+    },
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters'
+  });
+});
+
+test('concurrent fulfillment clicks send only one shop callback', async () => {
+  let callbackCount = 0;
+  let releaseCallback;
+  const callbackGate = new Promise((resolve) => { releaseCallback = resolve; });
+  await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+    const orderBody = JSON.stringify({
+      amountFen: 901,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      orderId: 'CALLBACKRACE01',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/CALLBACKRACE01',
+      title: '回调并发订单'
+    });
+    const timestamp = String(NOW);
+    await fetch(`${baseUrl}/api/shop/orders`, {
+      body: orderBody,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, timestamp, Buffer.from(orderBody)),
+        'x-shop-timestamp': timestamp
+      },
+      method: 'POST'
+    });
+
+    const request = () => fetch(`${baseUrl}/api/admin/orders/CALLBACKRACE01/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: true }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    const firstRequest = request();
+    while (callbackCount === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+    const secondResponse = await request();
+    const second = await secondResponse.json();
+    assert.equal(second.duplicate, true);
+    assert.equal(second.shopFulfillmentRetried, false);
+    assert.equal(second.order.callbackStatus, 'processing');
+    assert.equal(callbackCount, 1);
+
+    releaseCallback();
+    const firstResponse = await firstRequest;
+    const first = await firstResponse.json();
+    assert.equal(first.order.callbackStatus, 'success');
+    assert.equal(callbackCount, 1);
+  }, {
+    adminPassword: 'test-admin-password',
+    fetchImpl: async () => {
+      callbackCount++;
+      await callbackGate;
+      return { ok: true, status: 200 };
+    },
     sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters'
   });
 });
@@ -478,13 +1052,14 @@ test('every merchant gets isolated orders, QR codes, webhooks, and notification 
       assert.equal(upload.status, 200);
 
       const create = await fetch(`${baseUrl}/api/admin/orders`, {
-        body: JSON.stringify({ amount: `${index + 1}.01`, title: `${merchant.displayName}订单` }),
+        body: JSON.stringify({ amount: '1.00', title: `${merchant.displayName}订单` }),
         headers: { 'content-type': 'application/json', cookie },
         method: 'POST'
       });
       assert.equal(create.status, 201);
       merchant.order = (await create.json()).order;
       assert.equal(merchant.order.payee, merchant.username);
+      assert.equal(merchant.order.amountFen, 100);
     }
 
     for (const merchant of merchants) {
@@ -534,6 +1109,14 @@ test('every merchant gets isolated orders, QR codes, webhooks, and notification 
     });
     assert.equal(shopCreate.status, 201);
     assert.equal((await shopCreate.json()).order.payee, 'admin');
+
+    const forbiddenSettlement = await fetch(`${baseUrl}/api/admin/orders/SHOPADMIN123/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: true }),
+      headers: { 'content-type': 'application/json', cookie: merchantCookies.merchant_a },
+      method: 'POST'
+    });
+    assert.equal(forbiddenSettlement.status, 403);
+    assert.deepEqual(await forbiddenSettlement.json(), { error: 'forbidden' });
 
     for (const merchant of merchants) {
       const response = await fetch(`${baseUrl}/api/admin/orders`, {

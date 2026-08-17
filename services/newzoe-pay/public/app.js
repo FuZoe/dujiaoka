@@ -95,7 +95,8 @@ async function loadOrder() {
   }
   const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}`, { cache: 'no-store' });
   if (!response.ok) {
-    showPlaceholder('订单未找到', '请检查付款链接后重试');
+    if (response.status === 410) showPlaceholder('订单已失效', '请返回商店重新下单');
+    else showPlaceholder('订单未找到', '请检查付款链接后重试');
     return false;
   }
   order = await response.json();
@@ -138,6 +139,14 @@ async function start() {
   events.addEventListener('payment', (event) => {
     const payment = JSON.parse(event.data);
     if (payment.status === 'paid' && (!order || payment.orderId === order.id)) showSuccess(payment);
+  });
+
+  events.addEventListener('status', (event) => {
+    const current = JSON.parse(event.data);
+    if (current.status === 'inactive') {
+      events.close();
+      showPlaceholder('订单已失效', '请返回商店重新下单');
+    }
   });
 
   events.addEventListener('error', () => {

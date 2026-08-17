@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f4f6f5">
   <title>支付管理 | NewZoe Pay</title>
-  <link rel="stylesheet" href="/admin.css?v=20260813-1">
+  <link rel="stylesheet" href="/admin.css?v=20260817-2">
 </head>
 <body>
   <header class="admin-header">
@@ -61,7 +61,7 @@
       </div>
       <div class="table-shell">
         <table>
-          <thead><tr><th>订单</th><th>商品</th><th>金额</th><th>收款人</th><th>来源</th><th>状态</th><th>创建时间</th><th></th></tr></thead>
+          <thead><tr><th>订单</th><th>商品</th><th>金额</th><th>收款人</th><th>来源</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
           <tbody id="orders-body"></tbody>
         </table>
         <p class="empty" id="empty" hidden>暂无订单</p>
@@ -181,6 +181,25 @@
     </div>
   </dialog>
 
+  <!-- Manual payment confirmation dialog -->
+  <dialog id="mark-paid-dialog">
+    <div class="dialog-title"><div><p class="eyebrow">人工确认</p><h2>标记订单已支付</h2></div><button class="close-button" type="button" id="close-mark-paid" aria-label="关闭">&times;</button></div>
+    <dl class="settlement-summary">
+      <div><dt>订单号</dt><dd id="mark-paid-order-id">-</dd></div>
+      <div><dt>应收金额</dt><dd id="mark-paid-amount">-</dd></div>
+    </dl>
+    <label class="choice-row" id="shop-fulfillment-choice">
+      <input id="trigger-shop-fulfillment" type="checkbox" checked>
+      <span><strong>继续触发卡网自动发货</strong><small>取消勾选表示已经人工发货，系统将永久跳过此订单的卡网回调。</small></span>
+    </label>
+    <p class="hint" id="manual-order-note" hidden>这是手工收款单，确认后只更新支付状态。</p>
+    <p class="form-error" id="mark-paid-error" role="alert"></p>
+    <div class="dialog-actions">
+      <button class="secondary-button" id="cancel-mark-paid" type="button">取消</button>
+      <button class="primary-button" id="confirm-mark-paid" type="button">确认已收款</button>
+    </div>
+  </dialog>
+
   <!-- Confirm dialog -->
   <dialog id="confirm-dialog">
     <div class="dialog-title"><h2 id="confirm-title">确认操作</h2><button class="close-button" type="button" id="close-confirm" aria-label="关闭">&times;</button></div>
@@ -191,6 +210,6 @@
     </div>
   </dialog>
 
-  <script src="/admin.js?v=20260813-1" defer></script>
+  <script src="/admin.js?v=20260817-2" defer></script>
 </body>
 </html>

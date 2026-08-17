@@ -6,6 +6,9 @@ let orders = [];
 let users = [];
 let currentTab = "dashboard";
 let confirmResolve = null;
+let markPaidOrder = null;
+let markPaidBusy = false;
+const retryingOrders = new Set();
 
 // ==================== DOM refs ====================
 const $ = (s) => document.querySelector(s);
@@ -23,11 +26,13 @@ const createDialog = $("#create-dialog");
 const createdDialog = $("#created-dialog");
 const confirmDialog = $("#confirm-dialog");
 const resetPwDialog = $("#reset-pw-dialog");
+const markPaidDialog = $("#mark-paid-dialog");
 
 // ==================== Helpers ====================
 function money(fen) { return "¥" + (Number(fen || 0) / 100).toFixed(2); }
 function dt(v) { return v ? new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", timeStyle: "short" }).format(new Date(v)) : "-"; }
 function roleLabel(r) { return r === "super" ? "超级管理员" : "管理员"; }
+function esc(v) { return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
 
 function normStatus(o) {
   const s = o.payment?.status || o.status;
@@ -37,6 +42,12 @@ function normStatus(o) {
 }
 const statusMap = { pending: "待支付", paid: "已支付", completed: "已完成", expired: "已过期" };
 const smsfResultMap = { matched: "已匹配", duplicate: "重复通知", no_pending_order: "没有同金额待支付订单", amount_not_found: "未识别到金额", ignored: "已忽略" };
+const callbackStatusMap = { success: "卡网已发货", waiting: "等待卡网回调", processing: "卡网回调处理中", manual_fulfilled: "人工已发货", error: "卡网回调失败" };
+function callbackStatusLabel(status) { return status.startsWith("http_") ? "卡网回调失败" : (callbackStatusMap[status] || status); }
+function adminErrorMessage(error) {
+  const code = error.data?.error;
+  return ({ forbidden: "没有权限操作该订单", invalid_origin: "页面来源校验失败，请刷新后重试", invalid_content_type: "请求格式不正确，请刷新后重试", order_not_found: "订单不存在或已被移除", invalid_fulfillment_choice: "请选择卡网发货处理方式", invalid_order_status: "该订单当前状态不支持此操作" })[code] || error.message;
+}
 
 // ==================== API ====================
 async function api(url, opts = {}) {
@@ -45,6 +56,7 @@ async function api(url, opts = {}) {
   const r = await fetch(url, { ...opts, headers: h, credentials: "same-origin" });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) {
+    if (r.status === 401) setAuth(false);
     const fallback = r.status === 413 ? "文件超过服务器上传限制" : (r.status === 401 ? "登录已过期，请重新登录" : `请求失败（HTTP ${r.status}）`);
     throw Object.assign(new Error(d.error || fallback), { status: r.status, data: d });
   }
@@ -72,6 +84,8 @@ function setAuth(ok) {
     loadOrders();
     if (session.role === "super") loadUsers();
   } else {
+    $$('dialog[open]').forEach((dialog) => dialog.close());
+    if (confirmResolve) { confirmResolve(false); confirmResolve = null; }
     $$(".tab-content").forEach((t) => { t.hidden = true; t.classList.remove("active"); });
     session = null;
   }
@@ -108,15 +122,115 @@ function renderOrders() {
   ordersBody.replaceChildren(...filtered.map((o) => {
     const row = document.createElement("tr");
     const s = normStatus(o);
-    const link = o.payment ? "https://pay.newzoe.cloud/" + o.id : "";
-    row.innerHTML = `<td><strong>${o.id}</strong></td><td>${o.title || "未命名"}</td><td>${money(o.amountFen)}</td><td>${o.payee || o.payment?.payee || "-"}</td><td>${o.source === "manual" ? "手工" : "卡网"}</td><td><span class="status status-${s}">${statusMap[s] || s}</span></td><td>${dt(o.createdAt)}</td><td>${link ? `<a class="table-link" href="${link}" target="_blank" rel="noopener">收银台</a>` : ""}</td>`;
+    const payment = o.payment || null;
+    const link = payment ? "https://pay.newzoe.cloud/" + encodeURIComponent(o.id) : "";
+    const amountFen = payment?.amountFen ?? o.amountFen;
+    const baseAmountFen = payment?.baseAmountFen ?? o.baseAmountFen ?? amountFen;
+    const amountNote = baseAmountFen !== amountFen ? `<small>商品原价 ${money(baseAmountFen)}</small>` : "";
+    const callbackStatus = payment?.callbackStatus || "";
+    const callbackNote = callbackStatus ? `<small>${esc(callbackStatusLabel(callbackStatus))}</small>` : "";
+    const canMarkPaid = payment && s === "pending";
+    const isShopOrder = (payment?.source || o.source) === "dujiaoka";
+    const callbackLeaseExpired = callbackStatus === "processing" && Date.parse(payment?.callbackStartedAt || 0) < Date.now() - 2 * 60 * 1000;
+    const canRetryFulfillment = payment && s === "paid" && isShopOrder && !payment.callbackSuppressedAt && callbackStatus !== "success" && (callbackStatus !== "processing" || callbackLeaseExpired);
+    const retrying = retryingOrders.has(o.id);
+    const actions = `${link ? `<a class="table-link" href="${link}" target="_blank" rel="noopener">收银台</a>` : ""}${canMarkPaid ? `<button class="mark-paid-button" data-order="${esc(o.id)}" type="button">标记已支付</button>` : ""}${canRetryFulfillment ? `<button class="retry-fulfillment-button" data-order="${esc(o.id)}" type="button"${retrying ? " disabled" : ""}>${retrying ? "处理中..." : "重试发货"}</button>` : ""}`;
+    row.innerHTML = `<td><strong>${esc(o.id)}</strong><div class="mobile-order-actions">${actions}</div></td><td>${esc(o.title || "未命名")}</td><td>${money(amountFen)}${amountNote}</td><td>${esc(o.payee || payment?.payee || "-")}</td><td>${o.source === "manual" ? "手工" : "卡网"}</td><td><span class="status status-${esc(s)}">${esc(statusMap[s] || s)}</span>${callbackNote}</td><td>${dt(o.createdAt)}</td><td><div class="table-actions">${actions}</div></td>`;
     return row;
   }));
+  $$(".mark-paid-button").forEach((button) => button.addEventListener("click", () => openMarkPaid(button.dataset.order)));
+  $$(".retry-fulfillment-button").forEach((button) => button.addEventListener("click", () => retryFulfillment(button.dataset.order)));
   empty.hidden = filtered.length > 0;
   $("#metric-all").textContent = orders.length;
   $("#metric-pending").textContent = orders.filter((o) => normStatus(o) === "pending").length;
   $("#metric-paid").textContent = orders.filter((o) => normStatus(o) === "paid").length;
   $("#metric-completed").textContent = orders.filter((o) => normStatus(o) === "completed").length;
+}
+
+function openMarkPaid(orderId) {
+  if (markPaidBusy) return;
+  markPaidOrder = orders.find((order) => order.id === orderId) || null;
+  if (!markPaidOrder) return;
+  const payment = markPaidOrder.payment;
+  const isShopOrder = (payment?.source || markPaidOrder.source) === "dujiaoka";
+  $("#mark-paid-order-id").textContent = markPaidOrder.id;
+  $("#mark-paid-amount").textContent = money(payment?.amountFen ?? markPaidOrder.amountFen);
+  $("#shop-fulfillment-choice").hidden = !isShopOrder;
+  $("#manual-order-note").hidden = isShopOrder;
+  $("#trigger-shop-fulfillment").checked = true;
+  $("#mark-paid-error").textContent = "";
+  markPaidDialog.showModal();
+}
+
+function setMarkPaidBusy(busy) {
+  markPaidBusy = busy;
+  $("#confirm-mark-paid").disabled = busy;
+  $("#close-mark-paid").disabled = busy;
+  $("#cancel-mark-paid").disabled = busy;
+  $("#trigger-shop-fulfillment").disabled = busy;
+}
+
+function closeMarkPaid(force = false) {
+  if (markPaidBusy && !force) return;
+  if (markPaidDialog.open) markPaidDialog.close();
+  markPaidOrder = null;
+}
+
+$("#close-mark-paid").addEventListener("click", () => closeMarkPaid());
+$("#cancel-mark-paid").addEventListener("click", () => closeMarkPaid());
+markPaidDialog.addEventListener("cancel", (event) => {
+  if (markPaidBusy) event.preventDefault();
+});
+$("#confirm-mark-paid").addEventListener("click", async () => {
+  if (!markPaidOrder || markPaidBusy) return;
+  const targetOrder = markPaidOrder;
+  const button = $("#confirm-mark-paid");
+  const error = $("#mark-paid-error");
+  const isShopOrder = (targetOrder.payment?.source || targetOrder.source) === "dujiaoka";
+  setMarkPaidBusy(true);
+  button.textContent = "处理中...";
+  error.textContent = "";
+  try {
+    const result = await api(`/api/admin/orders/${encodeURIComponent(targetOrder.id)}/mark-paid`, {
+      method: "POST",
+      body: JSON.stringify({ triggerShopFulfillment: isShopOrder && $("#trigger-shop-fulfillment").checked })
+    });
+    const callbackStatus = result.order?.callbackStatus || "";
+    if (markPaidOrder === targetOrder) closeMarkPaid(true);
+    await loadOrders();
+    if (isShopOrder && result.shopFulfillmentTriggered && callbackStatus !== "success") {
+      alert("订单已标记支付，但卡网回调未成功，请查看订单状态。");
+    }
+  } catch (ex) {
+    if (ex.status === 401) { closeMarkPaid(true); return; }
+    if (markPaidOrder === targetOrder) error.textContent = adminErrorMessage(ex);
+  } finally {
+    setMarkPaidBusy(false);
+    button.textContent = "确认已收款";
+  }
+});
+
+async function retryFulfillment(orderId) {
+  if (retryingOrders.has(orderId)) return;
+  const confirmed = await showConfirm("重试卡网发货", `将再次向卡网发送订单 ${orderId} 的发货回调。`);
+  if (!confirmed) return;
+  retryingOrders.add(orderId);
+  renderOrders();
+  try {
+    const result = await api(`/api/admin/orders/${encodeURIComponent(orderId)}/mark-paid`, {
+      method: "POST",
+      body: JSON.stringify({ triggerShopFulfillment: true })
+    });
+    await loadOrders();
+    if (result.order?.callbackStatus === "processing") alert("卡网回调正在处理中，请稍后刷新查看结果。");
+    else if (result.order?.callbackStatus !== "success") alert("卡网回调仍未成功，请稍后重试。");
+  } catch (ex) {
+    if (ex.status === 401) return;
+    alert(adminErrorMessage(ex));
+  } finally {
+    retryingOrders.delete(orderId);
+    renderOrders();
+  }
 }
 
 async function loadOrders() {
@@ -141,7 +255,7 @@ async function loadUsers() {
 function renderUsers() {
   usersBody.replaceChildren(...users.map((u) => {
     const row = document.createElement("tr");
-    row.innerHTML = `<td><strong>${u.username}</strong></td><td>${u.displayName}</td><td>${roleLabel(u.role)}</td><td>${u.qrcode ? "已上传" : "未上传"}</td><td>${dt(u.createdAt)}</td><td>${u.username !== "admin" ? `<button class="secondary-button compact reset-pw-btn" data-user="${u.username}" type="button">改密</button><button class="secondary-button compact del-user-btn" data-user="${u.username}" type="button" style="color:#c83232;margin-left:6px">删除</button>` : ""}</td>`;
+    row.innerHTML = `<td><strong>${esc(u.username)}</strong></td><td>${esc(u.displayName)}</td><td>${esc(roleLabel(u.role))}</td><td>${u.qrcode ? "已上传" : "未上传"}</td><td>${dt(u.createdAt)}</td><td>${u.username !== "admin" ? `<button class="secondary-button compact reset-pw-btn" data-user="${esc(u.username)}" type="button">改密</button><button class="secondary-button compact del-user-btn" data-user="${esc(u.username)}" type="button" style="color:#c83232;margin-left:6px">删除</button>` : ""}</td>`;
     return row;
   }));
   // Bind buttons
@@ -161,6 +275,7 @@ $("#create-user-form").addEventListener("submit", async (e) => {
     form.reset();
     await loadUsers();
   } catch (ex) {
+    if (ex.status === 401) { resetPwDialog.close(); return; }
     err.textContent = ex.data?.error || ex.message;
   }
 });
@@ -303,6 +418,7 @@ $("#create-form").addEventListener("submit", async (e) => {
     createdDialog.showModal();
     await loadOrders();
   } catch (ex) {
+    if (ex.status === 401) { createDialog.close(); return; }
     err.textContent = ex.data?.error === "qrcode_required" ? "请先在“收款码”页面上传你自己的微信收款码" : "请填写正确的金额（最多两位小数）";
   }
 });

@@ -58,6 +58,7 @@ input:focus,select:focus,textarea:focus{border-color:#07a953;box-shadow:0 0 0 3p
 .primary-button:hover{background:#2d3a32}
 .primary-button.compact{min-height:40px;padding:0 15px;background:#078f49}
 .primary-button.compact:hover{background:#067a3e}
+.primary-button:disabled,.secondary-button:disabled{cursor:not-allowed;opacity:.55}
 .form-error{min-height:19px;margin:0;color:#c83232;font-size:12px}
 .form-success{margin:8px 0 0;color:#078f49;font-size:13px}
 
@@ -80,6 +81,12 @@ td small{display:block;margin-top:4px;color:#8b948f}
 .status-completed{color:#225f89;background:#e2f2ff}
 .status-expired{color:#6b7270;background:#ecefed}
 .table-link{color:#078f49;font-weight:700;text-decoration:none}
+.table-actions{display:flex;align-items:center;gap:10px}
+.mobile-order-actions{display:none}
+.mark-paid-button,.retry-fulfillment-button{min-height:36px;padding:0 10px;border:1px solid #b8d9c7;border-radius:5px;background:#effaf4;color:#076c3a;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.mark-paid-button:hover,.retry-fulfillment-button:hover{background:#dff7ea}
+.retry-fulfillment-button{border-color:#e4c977;background:#fff8df;color:#795700}
+.retry-fulfillment-button:hover{background:#fff2c2}
 .empty{padding:45px;text-align:center;color:#8b948f}
 
 /* Dialogs */
@@ -90,6 +97,15 @@ dialog::backdrop{background:rgba(13,24,18,.52);backdrop-filter:blur(3px)}
 .close-button{width:36px;height:36px;border:0;background:transparent;font-size:26px;cursor:pointer;line-height:1}
 .created-dialog a{display:block;padding:13px;border:1px solid #dfe4e1;border-radius:6px;color:#078f49;overflow-wrap:anywhere}
 .dialog-actions{margin-top:18px;display:flex;justify-content:flex-end;gap:9px}
+.settlement-summary{margin:0 0 18px;padding:14px 0;border-top:1px solid #e6ebe8;border-bottom:1px solid #e6ebe8}
+.settlement-summary div{display:grid;grid-template-columns:88px 1fr;gap:12px;padding:5px 0}
+.settlement-summary dt{color:#748079;font-size:12px}
+.settlement-summary dd{margin:0;color:#17211c;font-size:13px;font-weight:700;overflow-wrap:anywhere}
+.choice-row{grid-template-columns:20px 1fr;align-items:start;gap:11px;padding:13px;border:1px solid #cfe3d7;border-radius:7px;background:#f5fbf7;cursor:pointer}
+.choice-row input{width:20px;min-height:20px;margin:1px 0 0;accent-color:#078f49}
+.choice-row span{display:grid;gap:4px}
+.choice-row strong{color:#17211c;font-size:13px}
+.choice-row small{color:#66736c;font-size:12px;font-weight:400;line-height:1.5}
 
 /* QR preview */
 .qr-preview{display:flex;flex-direction:column;align-items:flex-start;gap:10px}
@@ -118,6 +134,10 @@ main{width:calc(100% - 24px);margin-top:24px}
 .toolbar{grid-template-columns:1fr 130px}
 .toolbar .secondary-button{grid-column:1/-1}
 .table-shell{margin:0 -12px;border-right:0;border-left:0;border-radius:0}
+.table-shell th:last-child,.table-shell td:last-child{display:none}
+.mobile-order-actions{display:flex;align-items:center;gap:10px;margin-top:10px}
+.mobile-order-actions .table-link{display:inline-flex;align-items:center;min-height:44px}
+.mark-paid-button,.retry-fulfillment-button{min-height:44px}
 .dashboard-title{align-items:start}
 .dashboard-title h1{font-size:24px}
 .login-panel{padding:28px 22px}
