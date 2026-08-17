@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#f4f6f5">
   <meta name="description" content="NewZoe 微信支付收银台">
   <title>微信支付 | NewZoe</title>
-  <link rel="stylesheet" href="/app.css?v=20260812-11">
+  <link rel="stylesheet" href="/app.css?v=20260817-3">
 </head>
 <body>
   <header class="site-header">
@@ -32,6 +32,7 @@
         <p class="amount"><span>¥</span><b id="payment-amount"></b></p>
         <p class="order-reference" id="order-reference" hidden></p>
         <p class="recipient">收款方 <strong id="payment-recipient">NewZoe</strong></p>
+        <p class="payment-countdown" id="payment-countdown" hidden><span id="countdown-label">支付剩余时间</span><strong id="countdown-value">20:00</strong></p>
         <div class="amount-warning" role="note">
           <span class="amount-warning-icon" aria-hidden="true">!</span>
           <p>请仔细核对金额，显示金额多少就付多少，否则机器无法识别。</p>
@@ -78,6 +79,6 @@
     <button type="button" id="close-success">完成</button>
   </dialog>
 
-  <script src="/app.js?v=20260817-2" defer></script>
+  <script src="/app.js?v=20260817-5" defer></script>
 </body>
 </html>

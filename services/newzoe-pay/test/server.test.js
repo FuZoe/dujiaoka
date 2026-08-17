@@ -167,15 +167,29 @@ test('SmsForwarder reports trusted payment text without an amount', async () => 
   });
 });
 
-test('SmsForwarder matches delayed notifications for orders activated within 24 hours', async () => {
+test('checkout closes its QR at 20 minutes while payment success can arrive during the five-minute grace', async () => {
   let clock = NOW;
+  const callbacks = [];
   await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+    const qrUpload = await fetch(`${baseUrl}/api/admin/qrcode`, {
+      body: Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(128)]),
+      headers: { cookie },
+      method: 'POST'
+    });
+    assert.equal(qrUpload.status, 200);
+
     const orderBody = JSON.stringify({
       amountFen: 500,
       callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
-      orderId: 'DELAYEDORDER123',
-      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/DELAYEDORDER123',
-      title: '延迟通知测试'
+      orderId: 'GRACEORDER500',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/GRACEORDER500',
+      title: '到账宽限测试'
     });
     const timestamp = String(clock);
     await fetch(`${baseUrl}/api/shop/orders`, {
@@ -187,25 +201,58 @@ test('SmsForwarder matches delayed notifications for orders activated within 24 
       },
       method: 'POST'
     });
-    await fetch(`${baseUrl}/api/orders/DELAYEDORDER123`);
+    clock = NOW + 20 * 60 * 1000 - 1;
+    const active = await fetch(`${baseUrl}/api/orders/GRACEORDER500`);
+    assert.equal((await active.json()).status, 'pending');
+    const activeQr = await fetch(`${baseUrl}/wechat-pay.jpg?order=GRACEORDER500`);
+    assert.equal(activeQr.status, 200);
+    assert.equal(activeQr.headers.get('cache-control'), 'no-store');
 
-    clock += 6 * 60 * 60 * 1000;
+    clock = NOW + 20 * 60 * 1000;
+    const expired = await fetch(`${baseUrl}/api/orders/GRACEORDER500`);
+    const expiredOrder = await expired.json();
+    assert.equal(expiredOrder.status, 'confirming');
+    assert.equal(expiredOrder.qrcodeReady, false);
+    assert.equal((await fetch(`${baseUrl}/wechat-pay.jpg?order=GRACEORDER500`)).status, 410);
+    const controller = new AbortController();
+    const graceEvents = await fetch(`${baseUrl}/api/events?client=expiredclient123456&order=GRACEORDER500`, {
+      signal: controller.signal
+    });
+    const reader = graceEvents.body.getReader();
+    const decoder = new TextDecoder();
+    let received = decoder.decode((await reader.read()).value);
+    assert.match(received, /"status":"confirming"/);
+
+    clock = NOW + 25 * 60 * 1000 - 1;
     const response = await fetch(`${baseUrl}/api/smsf/notify`, {
       body: smsfForm({ content: '微信支付收款到账5.00元', from: 'com.tencent.mm', title: '微信支付' }, String(clock)),
       method: 'POST'
     });
     assert.equal(response.status, 200);
-    assert.equal((await response.json()).orderId, 'DELAYEDORDER123');
+    const matched = await response.json();
+    assert.equal(matched.orderId, 'GRACEORDER500');
+    assert.equal(matched.delivered, 1);
+    while (!received.includes('event: payment')) {
+      received += decoder.decode((await reader.read()).value);
+    }
+    assert.match(received, /"status":"paid"/);
+    controller.abort();
+    assert.equal(callbacks.length, 1);
   }, {
-    fetchImpl: async () => ({ ok: true, status: 200 }),
-    now: () => clock
+    adminPassword: 'test-admin-password',
+    fetchImpl: async (url, request) => {
+      callbacks.push({ request, url });
+      return { ok: true, status: 200 };
+    },
+    now: () => clock,
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters'
   });
 });
 
-test('the first checkout visit persists its activation window across a restart', async () => {
+test('absolute checkout deadline survives refresh and restart without reactivation', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'newzoe-pay-restart-'));
   const stateFile = path.join(directory, 'state.json');
-  let clock = NOW - 23 * 60 * 60 * 1000;
+  let clock = NOW;
   let server;
   const start = async () => {
     server = createPayServer({
@@ -245,25 +292,99 @@ test('the first checkout visit persists its activation window across a restart',
     });
     assert.equal(created.status, 201);
 
-    clock = NOW;
+    const createdOrder = await created.json();
+    assert.equal(createdOrder.order.expiresAt, new Date(NOW + 20 * 60 * 1000).toISOString());
+    assert.equal(createdOrder.order.matchExpiresAt, new Date(NOW + 25 * 60 * 1000).toISOString());
+
+    clock = NOW + 20 * 60 * 1000;
     const opened = await fetch(`${baseUrl}/api/orders/RESTARTACTIVE01`);
     assert.equal(opened.status, 200);
+    assert.equal((await opened.json()).status, 'confirming');
     await stop();
     const persisted = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     assert.equal(persisted.orders[0].activatedAt, new Date(NOW).toISOString());
+    assert.equal(persisted.orders[0].expiresAt, new Date(NOW + 20 * 60 * 1000).toISOString());
 
     baseUrl = await start();
-    clock = NOW + 23.5 * 60 * 60 * 1000;
-    const paid = await fetch(`${baseUrl}/api/smsf/notify`, {
+    assert.equal((await (await fetch(`${baseUrl}/api/orders/RESTARTACTIVE01`)).json()).status, 'confirming');
+
+    const retryTimestamp = String(clock);
+    const retried = await fetch(`${baseUrl}/api/shop/orders`, {
+      body: orderBody,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, retryTimestamp, Buffer.from(orderBody)),
+        'x-shop-timestamp': retryTimestamp
+      },
+      method: 'POST'
+    });
+    assert.equal(retried.status, 410);
+
+    clock = NOW + 25 * 60 * 1000;
+    const late = await fetch(`${baseUrl}/api/smsf/notify`, {
       body: smsfForm({ content: '微信支付收款到账6.00元', from: 'com.tencent.mm', title: '微信支付' }, String(clock)),
       method: 'POST'
     });
-    assert.equal(paid.status, 200);
-    assert.equal((await paid.json()).orderId, 'RESTARTACTIVE01');
+    assert.equal(late.status, 409);
+    assert.deepEqual(await late.json(), { accepted: false, error: 'no_pending_order', matched: false });
+    assert.equal((await (await fetch(`${baseUrl}/api/orders/RESTARTACTIVE01`)).json()).status, 'expired');
+    const expiredEvents = await fetch(`${baseUrl}/api/events?client=finalexpired12345&order=RESTARTACTIVE01`);
+    assert.match(await expiredEvents.text(), /"status":"expired"/);
+
+    const explicitBody = JSON.stringify({ amountFen: 600, orderId: 'RESTARTACTIVE01', transactionId: 'late-txn-12345678' });
+    const explicit = await fetch(`${baseUrl}/api/payment/notify`, {
+      body: explicitBody,
+      headers: signedHeaders(explicitBody, String(clock / 1000)),
+      method: 'POST'
+    });
+    assert.equal(explicit.status, 410);
   } finally {
     await stop();
     fs.rmSync(directory, { force: true, recursive: true });
   }
+});
+
+test('legacy pending orders derive deadlines from their original timestamp', async () => {
+  await withServer(async (baseUrl) => {
+    const order = await fetch(`${baseUrl}/api/orders/LEGACYEXPIRED01`);
+    assert.equal(order.status, 200);
+    const publicOrder = await order.json();
+    assert.equal(publicOrder.status, 'expired');
+    assert.equal(publicOrder.expiresAt, new Date(NOW - 6 * 60 * 1000).toISOString());
+
+    const body = JSON.stringify({
+      amountFen: 700,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      orderId: 'LEGACYEXPIRED01',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/LEGACYEXPIRED01',
+      title: '旧订单刷新测试'
+    });
+    const timestamp = String(NOW);
+    const retried = await fetch(`${baseUrl}/api/shop/orders`, {
+      body,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, timestamp, Buffer.from(body)),
+        'x-shop-timestamp': timestamp
+      },
+      method: 'POST'
+    });
+    assert.equal(retried.status, 410);
+  }, {
+    initialState: {
+      orders: [{
+        amountFen: 700,
+        createdAt: new Date(NOW - 26 * 60 * 1000).toISOString(),
+        id: 'LEGACYEXPIRED01',
+        payee: 'admin',
+        source: 'dujiaoka',
+        status: 'pending',
+        title: '旧订单'
+      }],
+      transactions: [],
+      users: []
+    }
+  });
 });
 
 test('same-price orders receive unique payable amounts and match independently', async () => {
@@ -345,12 +466,17 @@ test('same-price orders receive unique payable amounts and match independently',
     const heldOrder = await create('UNIQUEORDER003');
     assert.equal(heldOrder.amountFen, 102);
 
-    clock += 25 * 60 * 60 * 1000;
-    const reusedOrder = await create('UNIQUEORDER004');
+    clock = NOW + 24 * 60 * 1000 + 58 * 1000;
+    const beforeRelease = await create('UNIQUEORDER004');
+    assert.equal(beforeRelease.amountFen, 103);
+
+    clock = NOW + 25 * 60 * 1000 + 1;
+    const reusedOrder = await create('UNIQUEORDER005');
     assert.equal(reusedOrder.amountFen, 100);
 
-    const renewedOrder = await create('UNIQUEORDER003');
-    assert.equal(renewedOrder.amountFen, 101);
+    clock = Date.parse(secondOrder.matchExpiresAt) + 1;
+    const nextReusedOrder = await create('UNIQUEORDER006');
+    assert.equal(nextReusedOrder.amountFen, 101);
   }, {
     fetchImpl: async (url, request) => {
       callbacks.push({ request, url });
@@ -715,6 +841,9 @@ test('a registered shop order is activated, paid, and sent to the shop callback'
     const completedResponse = await fetch(`${baseUrl}/api/orders/ORDER12345678`);
     assert.equal((await completedResponse.json()).status, 'paid');
     assert.equal(callbacks.length, 1);
+    const callback = JSON.parse(callbacks[0].request.body);
+    assert.equal(callback.manualOverride, undefined);
+    assert.equal(callback.matchedAt, new Date(NOW).toISOString());
   }, {
     fetchImpl: async (url, request) => {
       callbacks.push({ request, url });
@@ -741,7 +870,7 @@ test('admin can sign in and create a custom amount order', async () => {
     assert.equal(qrResponse.status, 200);
 
     const createResponse = await fetch(`${baseUrl}/api/admin/orders`, {
-      body: JSON.stringify({ amount: '12.34', title: '线下补款' }),
+      body: JSON.stringify({ amount: '12.34', expiryMinutes: '60', title: '线下补款' }),
       headers: { 'content-type': 'application/json', cookie },
       method: 'POST'
     });
@@ -749,7 +878,19 @@ test('admin can sign in and create a custom amount order', async () => {
     const created = await createResponse.json();
     assert.equal(created.order.amountFen, 1234);
     assert.equal(created.order.baseAmountFen, 1234);
+    assert.equal(created.order.expiresAt, new Date(NOW + 60 * 60 * 1000).toISOString());
+    assert.equal(created.order.matchExpiresAt, new Date(NOW + 65 * 60 * 1000).toISOString());
     assert.match(created.paymentUrl, /^https:\/\/pay\.newzoe\.cloud\/M/);
+
+    for (const expiryMinutes of ['0', '-1', '1.5', 'invalid', '1441']) {
+      const invalidExpiry = await fetch(`${baseUrl}/api/admin/orders`, {
+        body: JSON.stringify({ amount: '1.00', expiryMinutes, title: '无效有效期' }),
+        headers: { 'content-type': 'application/json', cookie },
+        method: 'POST'
+      });
+      assert.equal(invalidExpiry.status, 400);
+      assert.deepEqual(await invalidExpiry.json(), { error: 'invalid_expiry' });
+    }
 
     const secondCreateResponse = await fetch(`${baseUrl}/api/admin/orders`, {
       body: JSON.stringify({ amount: '12.34', title: '同价线下补款' }),
@@ -760,6 +901,8 @@ test('admin can sign in and create a custom amount order', async () => {
     const secondCreated = await secondCreateResponse.json();
     assert.equal(secondCreated.order.baseAmountFen, 1234);
     assert.equal(secondCreated.order.amountFen, 1235);
+    assert.equal(secondCreated.order.expiresAt, new Date(NOW + 20 * 60 * 1000).toISOString());
+    assert.equal(secondCreated.order.matchExpiresAt, new Date(NOW + 25 * 60 * 1000).toISOString());
 
     const ordersResponse = await fetch(`${baseUrl}/api/admin/orders`, { headers: { cookie } });
     const orders = (await ordersResponse.json()).orders;
@@ -844,6 +987,8 @@ test('admin manual payment can trigger shop fulfillment or permanently suppress 
     assert.equal(callbacks.length, 1);
     const callback = JSON.parse(callbacks[0].request.body);
     assert.equal(callback.amountFen, 700);
+    assert.equal(callback.manualOverride, true);
+    assert.equal(callback.matchedAt, new Date(NOW).toISOString());
     assert.equal(callback.paidAmountFen, 701);
     assert.equal(callback.orderId, 'MANUALSHIP002');
   }, {
@@ -919,6 +1064,8 @@ test('failed shop fulfillment can be retried without settling the order twice', 
     assert.equal(retried.shopFulfillmentRetried, true);
     assert.equal(retried.order.callbackStatus, 'success');
     assert.equal(callbacks.length, 2);
+    assert.equal(JSON.parse(callbacks[0].request.body).manualOverride, true);
+    assert.equal(JSON.parse(callbacks[1].request.body).manualOverride, true);
 
     const completedRetry = await fetch(`${baseUrl}/api/admin/orders/CALLBACKRETRY01/mark-paid`, {
       body: JSON.stringify({ triggerShopFulfillment: true }),
@@ -934,6 +1081,60 @@ test('failed shop fulfillment can be retried without settling the order twice', 
       callbacks.push({ request, url });
       return callbacks.length === 1 ? { ok: false, status: 503 } : { ok: true, status: 200 };
     },
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters'
+  });
+});
+
+test('an expired order can be manually fulfilled with a signed override', async () => {
+  let clock = NOW;
+  const callbacks = [];
+  await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+    const orderBody = JSON.stringify({
+      amountFen: 910,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      orderId: 'EXPIREDMANUAL01',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/EXPIREDMANUAL01',
+      title: '过期人工补单'
+    });
+    const timestamp = String(clock);
+    const created = await fetch(`${baseUrl}/api/shop/orders`, {
+      body: orderBody,
+      headers: {
+        'content-type': 'application/json',
+        'x-shop-signature': signPayload(SHOP_SECRET, timestamp, Buffer.from(orderBody)),
+        'x-shop-timestamp': timestamp
+      },
+      method: 'POST'
+    });
+    assert.equal(created.status, 201);
+
+    clock = NOW + 25 * 60 * 1000;
+    const ordersResponse = await fetch(`${baseUrl}/api/admin/orders`, { headers: { cookie } });
+    const orders = (await ordersResponse.json()).orders;
+    assert.equal(orders.find((order) => order.id === 'EXPIREDMANUAL01').status, 'expired');
+
+    const fulfilledResponse = await fetch(`${baseUrl}/api/admin/orders/EXPIREDMANUAL01/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: true }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    assert.equal(fulfilledResponse.status, 200);
+    assert.equal((await fulfilledResponse.json()).order.status, 'paid');
+    assert.equal(callbacks.length, 1);
+    assert.equal(JSON.parse(callbacks[0].request.body).manualOverride, true);
+  }, {
+    adminPassword: 'test-admin-password',
+    fetchImpl: async (url, request) => {
+      callbacks.push({ request, url });
+      return { ok: true, status: 200 };
+    },
+    now: () => clock,
     sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters'
   });
 });

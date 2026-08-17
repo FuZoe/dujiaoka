@@ -8,6 +8,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\DB;
 
 class CouponBack implements ShouldQueue
 {
@@ -46,12 +47,19 @@ class CouponBack implements ShouldQueue
      */
     public function handle()
     {
-        // 如果订单有使用优惠码
-        if ($this->order->coupon_id) {
-            // 优惠码次数+1
-            app('Service\CouponService')->retIncrByID($this->order->coupon_id);
-            // 设置订单优惠码已回退
-            app('Service\OrderService')->couponIsBack($this->order->order_sn);
-        }
+        DB::transaction(function () {
+            $order = Order::query()->lockForUpdate()->find($this->order->id);
+            if (!$order
+                || (int) $order->status !== Order::STATUS_EXPIRED
+                || !(int) $order->coupon_id
+                || (int) $order->coupon_ret_back === Order::COUPON_BACK_OK) {
+                return;
+            }
+
+            app('Service\CouponService')->retIncrByID($order->coupon_id);
+            Order::query()->whereKey($order->id)->update([
+                'coupon_ret_back' => Order::COUPON_BACK_OK,
+            ]);
+        });
     }
 }

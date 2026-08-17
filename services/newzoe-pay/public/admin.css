@@ -76,7 +76,7 @@ th{color:#748079;background:#fafbfa;font-size:11px;font-weight:700}
 td strong{display:block;font-size:12px}
 td small{display:block;margin-top:4px;color:#8b948f}
 .status{display:inline-flex;padding:5px 8px;border-radius:5px;font-size:11px;font-weight:700}
-.status-pending{color:#8c6200;background:#fff4cc}
+.status-pending,.status-confirming{color:#8c6200;background:#fff4cc}
 .status-paid{color:#076c3a;background:#dff7ea}
 .status-completed{color:#225f89;background:#e2f2ff}
 .status-expired{color:#6b7270;background:#ecefed}

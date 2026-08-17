@@ -62,7 +62,7 @@ class NewzoeBootstrap extends Command
             'template' => 'unicorn',
             'language' => 'zh_CN',
             'manage_email' => '',
-            'order_expire_time' => 15,
+            'order_expire_time' => 20,
             'is_open_anti_red' => 0,
             'is_open_img_code' => 0,
             'is_open_search_pwd' => 0,

@@ -38,6 +38,11 @@ return [
         'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
     ],
 
+    'newzoe_pay' => [
+        'payment_minutes' => env('NEWZOE_PAY_PAYMENT_MINUTES', 20),
+        'settlement_grace_minutes' => env('NEWZOE_PAY_SETTLEMENT_GRACE_MINUTES', 5),
+    ],
+
     'binance_pay' => [
         'base_url' => env('BINANCE_PAY_BASE_URL', 'https://api.binance.com'),
         'proxy' => env('BINANCE_PAY_PROXY', 'http://172.19.0.1:17895'),

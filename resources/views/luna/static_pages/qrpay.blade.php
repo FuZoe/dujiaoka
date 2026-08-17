@@ -29,7 +29,7 @@
                         <div class="product-info">
                             <p style="color: #3C8CE7 ;font-size: 18px;font-weight: 700; text-align: center;margin: 20px 0">
                                 {{ __('dujiaoka.payment_method') }}：[{{ $payname }}
-                                ], {{ __('dujiaoka.pay_order_expiration_date_prompt', ['min' => dujiaoka_config_get('order_expire_time', 5)]) }}
+                                ], {{ __('dujiaoka.pay_order_expiration_date_prompt', ['min' => dujiaoka_config_get('order_expire_time', 20)]) }}
                             </p>
                         </div>
 

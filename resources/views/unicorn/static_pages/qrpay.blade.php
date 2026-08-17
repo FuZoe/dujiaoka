@@ -6,7 +6,7 @@
         <section class="order-sheet qr-sheet">
             <div class="eyebrow">{{ $payname }}</div>
             <h1>扫码完成支付</h1>
-            <p>订单将在 {{ dujiaoka_config_get('order_expire_time', 5) }} 分钟后失效</p>
+            <p>订单将在 {{ dujiaoka_config_get('order_expire_time', 20) }} 分钟后失效</p>
             <div class="qr-frame"><img src="data:image/png;base64,{!! base64_encode(QrCode::format('png')->size(240)->generate($qr_code)) !!}" alt="付款二维码"></div>
             <div class="amount-due centered"><span>应付金额</span><strong>¥{{ $actual_price }}</strong></div>
             @if(Agent::isMobile() && isset($jump_payuri))

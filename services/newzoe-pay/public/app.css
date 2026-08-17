@@ -192,6 +192,27 @@ h1 {
   font-weight: 600;
 }
 
+.payment-countdown {
+  width: min(240px, 100%);
+  min-height: 38px;
+  margin: 18px 0 0;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #dfe4e1;
+  border-radius: 6px;
+  color: #68736d;
+  background: #f7f9f8;
+  font-size: 12px;
+}
+
+.payment-countdown strong {
+  color: #17211c;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
 .amount-warning {
   max-width: 390px;
   margin-top: 24px;
@@ -278,6 +299,11 @@ h1 {
 .payment-status.is-offline .status-spinner {
   border-color: #e2e5e3;
   border-top-color: #8a938e;
+}
+
+.payment-status.is-confirming .status-spinner {
+  border-color: #f4e4b7;
+  border-top-color: #b77a00;
 }
 
 .code-area {

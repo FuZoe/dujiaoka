@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Pay;
 use App\Exceptions\RuleValidationException;
 use App\Http\Controllers\PayController;
 use App\Models\Order;
+use App\Service\NewzoePaymentWindow;
+use Carbon\Carbon;
 use GuzzleHttp\Client;
 use Illuminate\Http\Request;
 
@@ -27,12 +29,20 @@ class NewzoePayController extends PayController
             if (strlen($this->secret()) < 32) {
                 throw new RuleValidationException('NewZoe 支付密钥未配置');
             }
+            $paymentWindow = app(NewzoePaymentWindow::class);
+            $expiresAt = $paymentWindow->paymentExpiresAt($this->order);
+            if (!$paymentWindow->paymentIsOpen($this->order)) {
+                throw new RuleValidationException(__('dujiaoka.prompt.order_is_expired'));
+            }
+            $matchExpiresAt = $paymentWindow->responseExpiresAt($this->order);
 
             $baseUrl = rtrim((string) env('NEWZOE_PAY_BASE_URL', 'https://pay.newzoe.cloud'), '/');
             $shopUrl = rtrim((string) config('app.url'), '/');
             $payload = json_encode([
                 'amountFen' => (int) round(((float) $this->order->actual_price) * 100),
                 'callbackUrl' => $shopUrl . '/pay/newzoe/notify_url',
+                'expiresAt' => $expiresAt->toIso8601String(),
+                'matchExpiresAt' => $matchExpiresAt->toIso8601String(),
                 'orderId' => $this->order->order_sn,
                 'returnUrl' => $shopUrl . '/detail-order-sn/' . $this->order->order_sn,
                 'title' => $this->order->title,
@@ -74,19 +84,46 @@ class NewzoePayController extends PayController
         $payload = json_decode($body, true);
         $orderSN = strtoupper((string) ($payload['orderId'] ?? ''));
         $amountFen = (int) ($payload['amountFen'] ?? 0);
+        $manualOverride = ($payload['manualOverride'] ?? false) === true;
         $order = $this->orderService->detailOrderSN($orderSN);
         if (!$order) {
             return response()->json(['error' => 'order_not_found'], 404);
         }
-        if ($order->status > Order::STATUS_WAIT_PAY) {
+        if (in_array((int) $order->status, [
+            Order::STATUS_PENDING,
+            Order::STATUS_PROCESSING,
+            Order::STATUS_COMPLETED,
+        ], true)) {
             return response()->json(['accepted' => true, 'duplicate' => true]);
+        }
+        $paymentWindow = app(NewzoePaymentWindow::class);
+        $matchedAt = null;
+        try {
+            $matchedAt = isset($payload['matchedAt']) ? Carbon::parse($payload['matchedAt']) : null;
+        } catch (\Throwable $exception) {
+            $matchedAt = null;
+        }
+        $settledWithinResponseWindow = $matchedAt
+            && $matchedAt->gte(Carbon::parse($order->created_at))
+            && $matchedAt->lt($paymentWindow->responseExpiresAt($order));
+        $manualCompletion = $manualOverride && in_array((int) $order->status, [
+            Order::STATUS_WAIT_PAY,
+            Order::STATUS_EXPIRED,
+        ], true);
+        $allowExpiredCompletion = $manualCompletion || $settledWithinResponseWindow;
+        if (!$allowExpiredCompletion && (
+            (int) $order->status !== Order::STATUS_WAIT_PAY
+            || !$paymentWindow->responseIsOpen($order)
+        )) {
+            return response()->json(['error' => 'order_expired'], 410);
         }
 
         try {
             $this->orderProcessService->completedOrder(
                 $orderSN,
                 (float) bcdiv((string) $amountFen, '100', 2),
-                (string) ($payload['transactionId'] ?? '')
+                (string) ($payload['transactionId'] ?? ''),
+                $allowExpiredCompletion
             );
             return response()->json(['accepted' => true]);
         } catch (RuleValidationException $exception) {

@@ -8,8 +8,10 @@ const path = require('node:path');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const LEGACY_QRCODE_DIR = path.join(PUBLIC_DIR, 'qrcodes');
 const SMSF_DUP_WIN = 5000;
-const ORDER_ACTIVE_WIN = Number(process.env.SMSF_ORDER_ACTIVE_HOURS || 24) * 60 * 60 * 1000;
-const AMOUNT_REUSE_HOLD = Number(process.env.PAY_AMOUNT_REUSE_MINUTES || (ORDER_ACTIVE_WIN / 60000)) * 60 * 1000;
+const DEFAULT_PAYMENT_MINUTES = Number(process.env.PAY_ORDER_TTL_MINUTES || 20);
+const SETTLEMENT_GRACE_MINUTES = Number(process.env.PAY_SETTLEMENT_GRACE_MINUTES || 5);
+const SMSF_REPLAY_HOURS = Number(process.env.SMSF_REPLAY_HOURS || 24);
+const MAX_MANUAL_PAYMENT_MINUTES = 24 * 60;
 const CALLBACK_LEASE = 2 * 60 * 1000;
 const SMSF_EVENT_LIMIT = 500;
 const MAX_AMOUNT_FEN = 99999999;
@@ -28,7 +30,7 @@ function parseCookies(req){return Object.fromEntries(String(req.headers.cookie||
 
 function loadState(f){try{const p=JSON.parse(fs.readFileSync(f,'utf8'));return{orders:Array.isArray(p.orders)?p.orders.slice(-2000):[],smsfEvents:Array.isArray(p.smsfEvents)?p.smsfEvents.slice(-SMSF_EVENT_LIMIT):[],txns:Array.isArray(p.transactions)?p.transactions.slice(-500):Array.isArray(p.txns)?p.txns.slice(-500):[],users:Array.isArray(p.users)?p.users:[]}}catch(e){if(e.code!=='ENOENT')console.error('state:',e);return{orders:[],smsfEvents:[],txns:[],users:[]}}}
 function saveState(f,s){const d=path.dirname(f);fs.mkdirSync(d,{recursive:true});const t=f+'.'+process.pid+'.tmp';const stored={orders:s.orders,smsfEvents:s.smsfEvents,transactions:s.txns,users:s.users};fs.writeFileSync(t,JSON.stringify(stored,null,2),{mode:0o600});fs.renameSync(t,f)}
-function pubOrder(o){return{amountFen:o.amountFen,baseAmountFen:o.baseAmountFen||o.amountFen,callbackStartedAt:o.callbackStartedAt||null,callbackStatus:o.callbackStatus||'',callbackSuppressedAt:o.callbackSuppressedAt||null,createdAt:o.createdAt,id:o.id,manualPaidBy:o.manualPaidBy||'',paidAt:o.paidAt||null,paymentMethod:o.paymentMethod||'',returnUrl:o.returnUrl||'',source:o.source,status:o.status,title:o.title,payee:o.payee||''}}
+function pubOrder(o,status=o.status){return{amountFen:o.amountFen,baseAmountFen:o.baseAmountFen||o.amountFen,callbackStartedAt:o.callbackStartedAt||null,callbackStatus:o.callbackStatus||'',callbackSuppressedAt:o.callbackSuppressedAt||null,createdAt:o.createdAt,expiresAt:o.expiresAt||null,id:o.id,manualPaidBy:o.manualPaidBy||'',matchExpiresAt:o.matchExpiresAt||null,paidAt:o.paidAt||null,paymentMethod:o.paymentMethod||'',returnUrl:o.returnUrl||'',source:o.source,status,title:o.title,payee:o.payee||''}}
 
 function hashPw(pw){const s=crypto.randomBytes(16).toString('hex');return s+':'+crypto.scryptSync(pw,s,64).toString('hex')}
 function verifyPw(pw,stored){const[s,h]=stored.split(':');if(!s||!h)return false;return secureEq(h,crypto.scryptSync(pw,s,64).toString('hex'))}
@@ -49,13 +51,31 @@ const stateFile=opts.stateFile||process.env.PAY_STATE_FILE||path.join(__dirname,
 const qrcodeDir=opts.qrcodeDir||process.env.PAY_QRCODE_DIR||path.join(path.dirname(stateFile),'qrcodes');
 const now=opts.now||(()=>Date.now());
 const fetchImpl=opts.fetchImpl||global.fetch;
+const paymentMinutes=Number.isFinite(Number(opts.paymentMinutes))?Number(opts.paymentMinutes):DEFAULT_PAYMENT_MINUTES;
+const settlementGraceMinutes=Number.isFinite(Number(opts.settlementGraceMinutes))?Number(opts.settlementGraceMinutes):SETTLEMENT_GRACE_MINUTES;
+if(!Number.isFinite(paymentMinutes)||!Number.isFinite(settlementGraceMinutes)||paymentMinutes<1||settlementGraceMinutes<0)throw new Error('invalid payment expiry configuration');
+const paymentWindow=Math.round(paymentMinutes*60*1000);
+const settlementGrace=Math.round(settlementGraceMinutes*60*1000);
+const replayHours=Number.isFinite(SMSF_REPLAY_HOURS)&&SMSF_REPLAY_HOURS>0?SMSF_REPLAY_HOURS:24;
+const notificationReplayWindow=replayHours*60*60*1000;
 
 const clients=new Map();
 const state=loadState(stateFile);
 seedUsers(state);
 if(superPassword){const a=userByName(state,'admin');if(a)a.password=hashPw(superPassword)}
 let stateMigrated=false;
-for(const order of state.orders){const expectedPayee=order.source==='dujiaoka'?'admin':(order.payee||'admin');if(order.payee!==expectedPayee){order.payee=expectedPayee;stateMigrated=true}if(!Number.isInteger(order.baseAmountFen)&&Number.isInteger(order.amountFen)){order.baseAmountFen=order.amountFen;stateMigrated=true}if(order.status==='paid'&&!order.settledAt&&(order.updatedAt||order.paidAt)){order.settledAt=order.updatedAt||order.paidAt;stateMigrated=true}}
+for(const order of state.orders){
+const expectedPayee=order.source==='dujiaoka'?'admin':(order.payee||'admin');
+if(order.payee!==expectedPayee){order.payee=expectedPayee;stateMigrated=true}
+if(!Number.isInteger(order.baseAmountFen)&&Number.isInteger(order.amountFen)){order.baseAmountFen=order.amountFen;stateMigrated=true}
+if(order.status==='paid'&&!order.settledAt&&(order.updatedAt||order.paidAt)){order.settledAt=order.updatedAt||order.paidAt;stateMigrated=true}
+const reference=Date.parse(order.activatedAt||order.createdAt||'');
+const expires=Date.parse(order.expiresAt||'');
+if(!Number.isFinite(expires)&&Number.isFinite(reference)){order.expiresAt=new Date(reference+paymentWindow).toISOString();stateMigrated=true}
+const matchExpires=Date.parse(order.matchExpiresAt||'');
+const normalizedExpires=Date.parse(order.expiresAt||'');
+if(!Number.isFinite(matchExpires)&&Number.isFinite(normalizedExpires)){order.matchExpiresAt=new Date(normalizedExpires+settlementGrace).toISOString();stateMigrated=true}
+}
 for(const user of state.users){if(user.username!=='admin'&&!user.smsfSecret){user.smsfSecret=crypto.randomBytes(32).toString('hex');stateMigrated=true}}
 const txnIds=new Set(state.txns.map(i=>i.transactionId));
 const recentSmsF=new Map();
@@ -67,18 +87,19 @@ if(stateMigrated)persist();
 function orderById(id){return state.orders.find(i=>i.id===id)}
 function orderPayee(order){return order?.payee||'admin'}
 function orderIsInactive(order){return order?.status==='pending'&&!!order.autoMatchDisabledAt}
+function deadline(order,field){const value=Date.parse(order?.[field]||'');return Number.isFinite(value)?value:0}
+function orderPaymentExpired(order){return !!order&&deadline(order,'expiresAt')<=now()}
+function orderMatchExpired(order){return !!order&&deadline(order,'matchExpiresAt')<=now()}
+function publicOrder(order){
+let status=order.status;
+if(orderIsInactive(order))status='inactive';
+else if(order.status==='pending'&&orderMatchExpired(order))status='expired';
+else if(order.status==='pending'&&orderPaymentExpired(order))status='confirming';
+return pubOrder(order,status)
+}
 function orderOccupiesAmount(order,payee,excludeId=''){
 if(order.id===excludeId||orderPayee(order)!==payee||!Number.isInteger(order.amountFen))return false;
-if(order.status==='pending'){
-if(order.autoMatchDisabledAt){const disabled=Date.parse(order.autoMatchDisabledAt);return Number.isFinite(disabled)&&disabled>=now()-AMOUNT_REUSE_HOLD}
-const ref=Date.parse(order.activatedAt||order.createdAt||0);
-return Number.isFinite(ref)&&ref>=now()-ORDER_ACTIVE_WIN
-}
-if(order.status==='paid'){
-const paid=Date.parse(order.settledAt||order.updatedAt||order.paidAt||0);
-return Number.isFinite(paid)&&paid>=now()-AMOUNT_REUSE_HOLD
-}
-return false
+return ['pending','paid'].includes(order.status)&&!orderMatchExpired(order)
 }
 function allocateAmountFen(baseAmountFen,payee,excludeId=''){
 const occupied=new Set(state.orders.filter(order=>orderOccupiesAmount(order,payee,excludeId)).map(order=>order.amountFen));
@@ -117,26 +138,29 @@ const af=Number(p.amountFen);
 const title=String(p.title||'\u8ba2\u5355').trim().slice(0,160);
 const cbUrl=String(p.callbackUrl||'');
 const retUrl=String(p.returnUrl||'');
+const requestedExpires=p.expiresAt?Date.parse(p.expiresAt):NaN;
+const requestedMatchExpires=p.matchExpiresAt?Date.parse(p.matchExpiresAt):NaN;
+const expiresAt=Number.isFinite(requestedExpires)?requestedExpires:now()+paymentWindow;
+const matchExpiresAt=Number.isFinite(requestedMatchExpires)?requestedMatchExpires:expiresAt+settlementGrace;
 try{const cb=new URL(cbUrl);if(cb.origin!==cbOrigin)throw new Error('origin')}catch{return sendJson(res,400,{error:'invalid_callback'})}
 if(!/^[A-Z0-9_-]{8,64}$/.test(id)||!Number.isInteger(af)||af<1||af>MAX_AMOUNT_FEN)return sendJson(res,400,{error:'invalid_order'});
+if(!Number.isFinite(expiresAt)||!Number.isFinite(matchExpiresAt)||matchExpiresAt<expiresAt)return sendJson(res,400,{error:'invalid_expiry'});
 let order=orderById(id);
 if(order&&order.status==='paid'){if(order.payee!=='admin'){order.payee='admin';persist()}return sendJson(res,200,{order:pubOrder(order),paymentUrl:'https://pay.newzoe.cloud/'+id})}
+if((order&&orderPaymentExpired(order))||(!order&&expiresAt<=now()))return sendJson(res,410,{error:'order_expired'});
 const created=!order;
 const updateTime=new Date(now()).toISOString();
 if(!order){
 const amountFen=allocateAmountFen(af,'admin');
 if(amountFen===null)return sendJson(res,409,{error:'amount_unavailable'});
-order={amountFen,baseAmountFen:af,id,createdAt:updateTime};state.orders.push(order)
+order={activatedAt:updateTime,amountFen,baseAmountFen:af,createdAt:updateTime,expiresAt:new Date(expiresAt).toISOString(),id,matchExpiresAt:new Date(matchExpiresAt).toISOString()};state.orders.push(order)
 }else{
 const reactivating=!!order.autoMatchDisabledAt;
-const activeRef=Date.parse(order.activatedAt||order.createdAt||0);
-const stale=!Number.isFinite(activeRef)||activeRef<now()-ORDER_ACTIVE_WIN;
 const collides=state.orders.some(candidate=>candidate.id!==order.id&&orderOccupiesAmount(candidate,'admin')&&candidate.amountFen===order.amountFen);
-if(stale||collides||reactivating){
+if(collides||reactivating){
 const amountFen=allocateAmountFen(reactivating?af:(order.baseAmountFen||af),'admin',order.id);
 if(amountFen===null)return sendJson(res,409,{error:'amount_unavailable'});
 order.amountFen=amountFen;
-if(stale||reactivating)order.activatedAt=updateTime
 }
 if(reactivating){order.baseAmountFen=af;delete order.autoMatchDisabledAt}
 }
@@ -145,19 +169,19 @@ persist();
 return sendJson(res,created?201:200,{order:pubOrder(order),paymentUrl:'https://pay.newzoe.cloud/'+id});
 }
 
-async function cbShop(order,tid){
+async function cbShop(order,tid,{manualOverride=false}={}){
 if(order.source!=='dujiaoka'||!order.callbackUrl||!shopSecret||order.callbackSuppressedAt||order.callbackStatus==='success')return{attempted:false};
 const priorStarted=Date.parse(order.callbackStartedAt||0);
 if(order.callbackStatus==='processing'&&Number.isFinite(priorStarted)&&priorStarted>now()-CALLBACK_LEASE)return{attempted:false,inProgress:true};
 order.callbackStatus='processing';order.callbackStartedAt=new Date(now()).toISOString();order.callbackAttempts=Number(order.callbackAttempts||0)+1;order.updatedAt=order.callbackStartedAt;persist();
-const pl=JSON.stringify({amountFen:order.baseAmountFen||order.amountFen,paidAmountFen:order.amountFen,orderId:order.id,paidAt:order.paidAt,transactionId:tid});
+const pl=JSON.stringify({amountFen:order.baseAmountFen||order.amountFen,matchedAt:order.settledAt,paidAmountFen:order.amountFen,orderId:order.id,paidAt:order.paidAt,transactionId:tid,...(manualOverride?{manualOverride:true}:{})});
 const ts=String(now());
 try{const r=await fetchImpl(order.callbackUrl,{body:pl,headers:{'content-type':'application/json','x-shop-signature':signPayload(shopSecret,ts,Buffer.from(pl)),'x-shop-timestamp':ts},method:'POST',signal:AbortSignal.timeout(15000)});order.callbackStatus=r.ok?'success':'http_'+r.status}catch(e){order.callbackStatus='error';console.error('cb fail',order.id,e.message)}
 order.updatedAt=new Date(now()).toISOString();persist()
 return{attempted:true,success:order.callbackStatus==='success'}
 }
 
-async function settleOrder(order,paidAt,tid,{triggerShopCallback=true}={}){
+async function settleOrder(order,paidAt,tid,{triggerShopCallback=true,manualOverride=false}={}){
 if(order.status==='paid')return{duplicate:true,delivered:0};
 order.status='paid';order.paidAt=paidAt;order.settledAt=new Date(now()).toISOString();order.transactionId=tid;
 order.updatedAt=order.settledAt;
@@ -165,13 +189,12 @@ state.txns.push({amountFen:order.amountFen,baseAmountFen:order.baseAmountFen||or
 txnIds.add(tid);persist();
 const pmt={amountFen:order.amountFen,orderId:order.id,paidAt,status:'paid',test:false};
 const d=broadcast(pmt,'',order.id);
-if(triggerShopCallback)await cbShop(order,tid);
+if(triggerShopCallback)await cbShop(order,tid,{manualOverride});
 return{delivered:d,duplicate:false}
 }
 
 function findPending(amts,payee='admin'){
-const cutoff=now()-ORDER_ACTIVE_WIN;
-return state.orders.filter(o=>o.status==='pending'&&!o.autoMatchDisabledAt&&orderPayee(o)===payee&&amts.includes(o.amountFen)).filter(o=>{const ref=Date.parse(o.activatedAt||o.createdAt||0);return Number.isFinite(ref)&&ref>=cutoff}).sort((a,b)=>Date.parse(a.activatedAt||a.createdAt)-Date.parse(b.activatedAt||b.createdAt))[0]
+return state.orders.filter(o=>o.status==='pending'&&!o.autoMatchDisabledAt&&!orderMatchExpired(o)&&orderPayee(o)===payee&&amts.includes(o.amountFen)).sort((a,b)=>Date.parse(a.activatedAt||a.createdAt)-Date.parse(b.activatedAt||b.createdAt))[0]
 }
 
 function recordSmsfEvent(data){
@@ -196,7 +219,7 @@ if(!Number.isInteger(af)||!/^[A-Za-z0-9_.:-]{8,128}$/.test(tid))return sendJson(
 if(cid&&!/^[A-Za-z0-9_-]{16,80}$/.test(cid))return sendJson(res,400,{error:'invalid_client'});
 if(isTest&&!cid)return sendJson(res,400,{error:'test_requires_client'});
 const order=oid?orderById(oid):null;
-if(order){if(order.amountFen!==af)return sendJson(res,202,{accepted:true,matched:false});const r=await settleOrder(order,p.paidAt||new Date(now()).toISOString(),tid);return sendJson(res,200,{accepted:true,delivered:r.delivered,duplicate:r.duplicate,matched:true})}
+if(order){if(order.status!=='paid'&&orderMatchExpired(order))return sendJson(res,410,{error:'order_expired'});if(order.amountFen!==af)return sendJson(res,202,{accepted:true,matched:false});const r=await settleOrder(order,p.paidAt||new Date(now()).toISOString(),tid);return sendJson(res,200,{accepted:true,delivered:r.delivered,duplicate:r.duplicate,matched:true})}
 if(!isTest)return sendJson(res,202,{accepted:true,matched:false,reason:'order_required'});
 const pmt={amountFen:af,paidAt:p.paidAt||new Date(now()).toISOString(),status:'paid',test:isTest};
 return sendJson(res,200,{accepted:true,delivered:broadcast(pmt,cid),matched:true,test:isTest})
@@ -226,7 +249,7 @@ const hasPmt=/收款|到账|支付成功|已支付/.test(ntfTxt);
 const fp=crypto.createHash('sha256').update(payee).update('\0').update(pkg).update('\0').update(ntfTxt).digest('hex');
 const prev=recentSmsF.get(fp);
 const prior=state.smsfEvents.findLast(event=>event.fingerprint===fp);
-const priorIsRecent=prior&&Date.parse(prior.receivedAt)>=now()-ORDER_ACTIVE_WIN;
+const priorIsRecent=prior&&Date.parse(prior.receivedAt)>=now()-notificationReplayWindow;
 const pend=findPending(amts,payee);
 const matched=isWx&&hasTrust&&hasPmt&&!!pend;
 const audit={amountsFen:amts,fingerprint:fp,notificationAt:new Date(tms).toISOString(),orderId:pend?.id||'',packageName:pkg,payee,title:title.slice(0,80)};
@@ -253,21 +276,17 @@ function handlePublicOrder(res,id){
 const order=orderById(id);
 if(!order)return sendJson(res,404,{error:'order_not_found'});
 if(orderIsInactive(order))return sendJson(res,410,{error:'order_inactive'});
-if(order.status==='pending'){
-const hadActivatedAt=!!order.activatedAt;
-const activeRef=Date.parse(order.activatedAt||order.createdAt||0);
-const stale=!Number.isFinite(activeRef)||activeRef<now()-ORDER_ACTIVE_WIN;
+if(order.status==='pending'&&!orderPaymentExpired(order)){
 const collides=state.orders.some(candidate=>candidate.id!==order.id&&orderOccupiesAmount(candidate,orderPayee(order))&&candidate.amountFen===order.amountFen);
-if(stale||collides){
+if(collides){
 const amountFen=allocateAmountFen(order.baseAmountFen||order.amountFen,orderPayee(order),order.id);
 if(amountFen===null)return sendJson(res,409,{error:'amount_unavailable'});
 order.amountFen=amountFen
 }
-if(!hadActivatedAt||stale)order.activatedAt=new Date(now()).toISOString();
-if(!order.updatedAt||!hadActivatedAt||stale||collides){order.updatedAt=new Date(now()).toISOString();persist()}
+if(!order.updatedAt||collides){order.updatedAt=new Date(now()).toISOString();persist()}
 }
 const payee=orderPayee(order);const user=userByName(state,payee);
-return sendJson(res,200,{...pubOrder(order),payee,payeeDisplayName:user?.displayName||payee,qrcodeReady:!!payeeQrPath(payee)})
+return sendJson(res,200,{...publicOrder(order),payee,payeeDisplayName:user?.displayName||payee,qrcodeReady:!orderPaymentExpired(order)&&!!payeeQrPath(payee),serverTime:new Date(now()).toISOString()})
 }
 
 async function fetchShopOrders(){
@@ -366,8 +385,8 @@ return sendJson(res,200,{qrcode:fn,url:'/qrcodes/'+fn})
 if(url.pathname==='/api/admin/orders'&&req.method==='GET'){
 const shop=await fetchShopOrders();
 const localById=new Map(state.orders.map(o=>[o.id,o]));
-const merged=shop.map(so=>{const po=localById.get(so.id);localById.delete(so.id);const payment=po?pubOrder(po):null;return{...so,amountFen:payment?.amountFen||so.amountFen,baseAmountFen:payment?.baseAmountFen||so.amountFen,payee:'admin',payment}});
-for(const o of localById.values())merged.push({amountFen:o.amountFen,baseAmountFen:o.baseAmountFen||o.amountFen,createdAt:o.createdAt,id:o.id,source:o.source,status:o.status,title:o.title,payee:orderPayee(o),payment:pubOrder(o)});
+const merged=shop.map(so=>{const po=localById.get(so.id);localById.delete(so.id);const payment=po?publicOrder(po):null;const status=['confirming','expired'].includes(payment?.status)?payment.status:so.status;return{...so,amountFen:payment?.amountFen||so.amountFen,baseAmountFen:payment?.baseAmountFen||so.amountFen,payee:'admin',status,payment}});
+for(const o of localById.values()){const payment=publicOrder(o);merged.push({amountFen:o.amountFen,baseAmountFen:o.baseAmountFen||o.amountFen,createdAt:o.createdAt,expiresAt:o.expiresAt,id:o.id,source:o.source,status:payment.status,title:o.title,payee:orderPayee(o),payment})}
 merged.sort((a,b)=>Date.parse(b.createdAt||0)-Date.parse(a.createdAt||0));
 const filtered=isSuper?merged:merged.filter(o=>(o.payment?.payee||o.payee||'admin')===curObj.username);
 return sendJson(res,200,{orders:filtered.slice(0,1000)})
@@ -377,11 +396,16 @@ if(!payeeQrPath(curObj.username))return sendJson(res,409,{error:'qrcode_required
 const body=await readBody(req);let p;try{p=JSON.parse(body.toString('utf8'))}catch{return sendJson(res,400,{})}
 const af=yuanToFen(String(p.amount||''));
 const title=String(p.title||'\u624b\u5de5\u6536\u6b3e').trim().slice(0,160);
+const expiryMinutes=p.expiryMinutes===undefined?paymentMinutes:Number(p.expiryMinutes);
 if(!af||af>MAX_AMOUNT_FEN||!title)return sendJson(res,400,{error:'invalid_order'});
+if(!Number.isInteger(expiryMinutes)||expiryMinutes<1||expiryMinutes>MAX_MANUAL_PAYMENT_MINUTES)return sendJson(res,400,{error:'invalid_expiry'});
 const id='M'+new Date(now()).toISOString().replace(/\D/g,'').slice(2,14)+crypto.randomBytes(3).toString('hex').toUpperCase();
 const amountFen=allocateAmountFen(af,curObj.username);
 if(amountFen===null)return sendJson(res,409,{error:'amount_unavailable'});
-const order={amountFen,baseAmountFen:af,createdAt:new Date(now()).toISOString(),id,source:'manual',status:'pending',title,payee:curObj.username,updatedAt:new Date(now()).toISOString()};
+const createdAt=new Date(now()).toISOString();
+const expiresAt=new Date(now()+expiryMinutes*60*1000).toISOString();
+const matchExpiresAt=new Date(now()+(expiryMinutes+settlementGraceMinutes)*60*1000).toISOString();
+const order={activatedAt:createdAt,amountFen,baseAmountFen:af,createdAt,expiresAt,id,matchExpiresAt,source:'manual',status:'pending',title,payee:curObj.username,updatedAt:createdAt};
 state.orders.push(order);persist();
 return sendJson(res,201,{order:pubOrder(order),paymentUrl:'https://pay.newzoe.cloud/'+id})
 }
@@ -396,7 +420,7 @@ const body=await readBody(req);let p;try{p=JSON.parse(body.toString('utf8'))}cat
 if(order.source==='dujiaoka'&&typeof p.triggerShopFulfillment!=='boolean')return sendJson(res,400,{error:'invalid_fulfillment_choice'});
 if(order.status==='paid'){
 const shouldRetry=order.source==='dujiaoka'&&p.triggerShopFulfillment===true&&!order.callbackSuppressedAt&&order.callbackStatus!=='success';
-const retryResult=shouldRetry?await cbShop(order,order.transactionId||('manual-retry-'+order.id)):{attempted:false};
+const retryResult=shouldRetry?await cbShop(order,order.transactionId||('manual-retry-'+order.id),{manualOverride:true}):{attempted:false};
 return sendJson(res,200,{duplicate:true,order:pubOrder(order),shopFulfillmentRetried:retryResult.attempted,shopFulfillmentTriggered:retryResult.attempted})
 }
 if(order.status!=='pending')return sendJson(res,409,{error:'invalid_order_status'});
@@ -405,7 +429,7 @@ const triggerShopCallback=order.source==='dujiaoka'&&p.triggerShopFulfillment===
 order.manualPaidAt=paidAt;order.manualPaidBy=curObj.username;order.paymentMethod='manual_admin';
 if(order.source==='dujiaoka'&&!triggerShopCallback){order.callbackStatus='manual_fulfilled';order.callbackSuppressedAt=paidAt;order.callbackSuppressedBy=curObj.username}
 const tid='manual-'+String(now())+'-'+crypto.randomBytes(6).toString('hex');
-const result=await settleOrder(order,paidAt,tid,{triggerShopCallback});
+const result=await settleOrder(order,paidAt,tid,{triggerShopCallback,manualOverride:triggerShopCallback});
 return sendJson(res,200,{duplicate:result.duplicate,order:pubOrder(order),shopFulfillmentTriggered:triggerShopCallback})
 }
 
@@ -428,9 +452,9 @@ const fp=path.resolve(PUBLIC_DIR,rel);
 if(!fp.startsWith(PUBLIC_DIR+path.sep))return sendJson(res,404,{});
 return serveFile(fp,res)
 }
-function serveFile(fp,res){
+function serveFile(fp,res,cacheControl=''){
 fs.stat(fp,(err,st)=>{if(err||!st.isFile())return sendJson(res,404,{});const ext=path.extname(fp).toLowerCase();
-res.writeHead(200,{'Cache-Control':ext==='.html'?'no-cache':'public, max-age=3600','Content-Length':st.size,'Content-Type':CT[ext]||'application/octet-stream','X-Content-Type-Options':'nosniff'});fs.createReadStream(fp).pipe(res)})
+res.writeHead(200,{'Cache-Control':cacheControl||(ext==='.html'?'no-cache':'public, max-age=3600'),'Content-Length':st.size,'Content-Type':CT[ext]||'application/octet-stream','X-Content-Type-Options':'nosniff'});fs.createReadStream(fp).pipe(res)})
 }
 
 const server=http.createServer(async(req,res)=>{
@@ -447,7 +471,8 @@ if(oid&&!orderById(oid))return sendJson(res,404,{error:'order_not_found'});
 res.writeHead(200,{'Cache-Control':'no-cache, no-transform','Connection':'keep-alive','Content-Type':'text/event-stream; charset=utf-8','X-Accel-Buffering':'no'});res.flushHeaders();
 const co=oid?orderById(oid):null;
 if(orderIsInactive(co)){sendEvent(res,'status',{id:co.id,status:'inactive'});return res.end()}
-sendEvent(res,'status',co?pubOrder(co):{status:'waiting'});
+if(orderMatchExpired(co)){sendEvent(res,'status',{id:co.id,status:'expired'});return res.end()}
+sendEvent(res,'status',co?publicOrder(co):{status:'waiting'});
 const streams=clients.get(cid)||new Set();const stream={orderId:oid,res};streams.add(stream);clients.set(cid,streams);
 const hb=setInterval(()=>res.write(': heartbeat\n\n'),20000);
 req.on('close',()=>{clearInterval(hb);streams.delete(stream);if(streams.size===0)clients.delete(cid)});return}
@@ -461,8 +486,8 @@ let pp=url.pathname.replace(/^\/+/,'');let requested=pp==='admin'?'admin.html':p
 if(requested==='wechat-pay.jpg'){
 let payee=String(url.searchParams.get('user')||'admin').trim().toLowerCase();
 const oid=String(url.searchParams.get('order')||'').toUpperCase();
-if(oid){const order=orderById(oid);if(!order)return sendJson(res,404,{error:'order_not_found'});if(orderIsInactive(order))return sendJson(res,410,{error:'order_inactive'});payee=orderPayee(order)}
-const qrPath=payeeQrPath(payee);if(qrPath)return serveFile(qrPath,res);
+if(oid){const order=orderById(oid);if(!order)return sendJson(res,404,{error:'order_not_found'});if(orderIsInactive(order))return sendJson(res,410,{error:'order_inactive'});if(orderPaymentExpired(order))return sendJson(res,410,{error:'order_expired'});payee=orderPayee(order)}
+const qrPath=payeeQrPath(payee);if(qrPath)return serveFile(qrPath,res,oid?'no-store':'');
 return sendJson(res,404,{error:'qrcode_not_configured'})}
 return serveStatic(requested,res)}
 return sendJson(res,405,{error:'method_not_allowed'})}catch(e){console.error(e);if(!res.headersSent)sendJson(res,e.statusCode||500,{error:'internal_error'});else res.end()}});

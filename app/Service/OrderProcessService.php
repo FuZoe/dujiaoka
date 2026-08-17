@@ -367,9 +367,11 @@ class OrderProcessService
                 // 使用次数-1
                 $this->couponService->retDecr($this->coupon->coupon);
             }
-            // 将订单加入队列 x分钟后过期
-            $expiredOrderDate = dujiaoka_config_get('order_expire_time', 5);
-            OrderExpired::dispatch($order->order_sn)->delay(Carbon::now()->addMinutes($expiredOrderDate));
+            // NewZoe 使用固定的绝对支付截止时间，避免后台设置变更影响既有订单。
+            $expiresAt = optional($order->pay)->pay_check === 'newzoe-wechat'
+                ? app(NewzoePaymentWindow::class)->responseExpiresAt($order)
+                : Carbon::now()->addMinutes(dujiaoka_config_get('order_expire_time', 20));
+            OrderExpired::dispatch($order->order_sn)->delay($expiresAt);
             return $order;
         } catch (\Exception $exception) {
             throw new RuleValidationException($exception->getMessage());
@@ -384,29 +386,65 @@ class OrderProcessService
      * @param string $orderSN 订单号
      * @param float $actualPrice 实际支付金额
      * @param string $tradeNo 第三方订单号
+     * @param bool $allowExpired 是否允许签名保护的人工补单恢复过期订单
      * @return Order
      *
      * @author    assimon<ashang@utf8.hk>
      * @copyright assimon<ashang@utf8.hk>
      * @link      http://utf8.hk/
      */
-    public function completedOrder(string $orderSN, float $actualPrice, string $tradeNo = '')
+    public function completedOrder(
+        string $orderSN,
+        float $actualPrice,
+        string $tradeNo = '',
+        bool $allowExpired = false
+    )
     {
         DB::beginTransaction();
         try {
             // 得到订单详情
-            $order = $this->orderService->detailOrderSN($orderSN);
+            $order = Order::query()
+                ->with(['coupon', 'pay', 'goods'])
+                ->where('order_sn', $orderSN)
+                ->lockForUpdate()
+                ->first();
             if (!$order) {
                 throw new \Exception(__('dujiaoka.prompt.order_does_not_exist'));
             }
-            // 订单已经处理
-            if ($order->status == Order::STATUS_COMPLETED) {
+            $bccomp = bccomp($order->actual_price, $actualPrice, 2);
+            // 仅待支付和支付匹配器已锁定的订单可以进入完成流程。
+            $allowedStatuses = [
+                Order::STATUS_WAIT_PAY,
+                Order::STATUS_PROCESSING,
+            ];
+            if ($allowExpired) {
+                $allowedStatuses[] = Order::STATUS_EXPIRED;
+            }
+            if (!in_array((int) $order->status, $allowedStatuses, true)) {
+                if ($tradeNo !== ''
+                    && (string) $order->trade_no !== ''
+                    && hash_equals((string) $order->trade_no, $tradeNo)
+                    && $bccomp === 0) {
+                    DB::commit();
+                    return $order;
+                }
                 throw new \Exception(__('dujiaoka.prompt.order_status_completed'));
             }
-            $bccomp = bccomp($order->actual_price, $actualPrice, 2);
             // 金额不一致
             if ($bccomp != 0) {
                 throw new \Exception(__('dujiaoka.prompt.order_inconsistent_amounts'));
+            }
+            if ((int) $order->status === Order::STATUS_EXPIRED
+                && (int) $order->coupon_id > 0
+                && (int) $order->coupon_ret_back === Order::COUPON_BACK_OK) {
+                $couponReclaimed = Coupon::query()
+                    ->whereKey($order->coupon_id)
+                    ->where('ret', '>', 0)
+                    ->decrement('ret', 1);
+                if ($couponReclaimed !== 1) {
+                    throw new \Exception('优惠码可用次数不足，过期订单未恢复');
+                }
+                $order->coupon_ret_back = Order::COUPON_BACK_WAIT;
             }
             $order->actual_price = $actualPrice;
             $order->trade_no = $tradeNo;

@@ -5,7 +5,10 @@ on:
     branches:
       - master
     paths:
+      - app/**
+      - config/**
       - services/newzoe-pay/**
+      - tests/**
       - .github/workflows/newzoe-pay-tests.yml
   workflow_dispatch:
 
@@ -17,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  payment-service:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
@@ -38,3 +41,22 @@ jobs:
           node-version: ${{ matrix.node-version }}
       - name: Run payment regression tests
         run: npm test
+
+  shop-expiry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Use PHP 8.0
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.0'
+          extensions: bcmath, gd, pdo_sqlite
+          coverage: none
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+      - name: Run payment-window tests
+        run: |
+          vendor/bin/phpunit tests/Unit/NewzoePaymentWindowTest.php
+          vendor/bin/phpunit tests/Unit/NewzoePaymentLifecycleTest.php

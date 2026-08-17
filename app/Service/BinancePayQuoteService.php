@@ -58,7 +58,7 @@ class BinancePayQuoteService
             }
 
             $shopExpiry = ($lockedOrder->created_at ?: $now)->copy()
-                ->addMinutes(max(5, (int) dujiaoka_config_get('order_expire_time', 5)));
+                ->addMinutes(max(5, (int) dujiaoka_config_get('order_expire_time', 20)));
             $configuredExpiry = $now->copy()
                 ->addMinutes(max(5, (int) config('services.binance_pay.quote_ttl_minutes', 15)));
             // Settlement grace is applied after this deadline by the matcher. It

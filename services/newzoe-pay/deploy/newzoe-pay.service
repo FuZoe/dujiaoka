@@ -11,6 +11,9 @@ WorkingDirectory=/opt/newzoe-pay
 Environment=NODE_ENV=production
 Environment=HOST=127.0.0.1
 Environment=PORT=3210
+Environment=PAY_ORDER_TTL_MINUTES=20
+Environment=PAY_SETTLEMENT_GRACE_MINUTES=5
+Environment=SMSF_REPLAY_HOURS=24
 Environment=PAY_NOTIFY_SECRET_FILE=/etc/newzoe-pay/notify.secret
 Environment=SMSF_NOTIFY_SECRET_FILE=/etc/newzoe-pay/smsf.secret
 Environment=SHOP_API_SECRET_FILE=/etc/newzoe-pay/shop.secret

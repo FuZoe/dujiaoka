@@ -28,7 +28,7 @@
                     <div class="layui-card-body">
                         <div class="product-info">
                             <p style="color: #3C8CE7 ;font-size: 18px;font-weight: 700; text-align: center;margin: 20px 0">
-                                {{ __('dujiaoka.warning_title') }}{{ __('dujiaoka.date_to_expired_order', ['min' => dujiaoka_config_get('order_expire_time', 5)]) }}
+                                {{ __('dujiaoka.warning_title') }}{{ __('dujiaoka.date_to_expired_order', ['min' => dujiaoka_config_get('order_expire_time', 20)]) }}
                             </p>
                         </div>
                         <table class="layui-table" lay-skin="nob">

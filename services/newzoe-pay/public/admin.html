@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f4f6f5">
   <title>支付管理 | NewZoe Pay</title>
-  <link rel="stylesheet" href="/admin.css?v=20260817-2">
+  <link rel="stylesheet" href="/admin.css?v=20260817-3">
 </head>
 <body>
   <header class="admin-header">
@@ -53,6 +53,7 @@
         <select id="status-filter" aria-label="状态筛选">
           <option value="">全部状态</option>
           <option value="pending">待支付</option>
+          <option value="confirming">到账确认中</option>
           <option value="paid">已支付</option>
           <option value="completed">已完成</option>
           <option value="expired">已过期</option>
@@ -166,6 +167,7 @@
       <div class="dialog-title"><div><p class="eyebrow">手工订单</p><h2>新建收款单</h2></div><button class="close-button" type="button" id="close-create" aria-label="关闭">&times;</button></div>
       <label>订单说明<input name="title" maxlength="160" value="手工收款订单" required></label>
       <label>收款金额（元）<input name="amount" type="number" inputmode="decimal" min="0.01" max="999999.99" step="0.01" placeholder="例如 9.90" required></label>
+      <label>支付有效期（分钟）<input name="expiryMinutes" type="number" inputmode="numeric" min="1" max="1440" step="1" value="20" required></label>
       <p class="form-error" id="create-error" role="alert"></p>
       <button class="primary-button" type="submit">创建并生成付款链接</button>
     </form>
@@ -210,6 +212,6 @@
     </div>
   </dialog>
 
-  <script src="/admin.js?v=20260817-2" defer></script>
+  <script src="/admin.js?v=20260817-4" defer></script>
 </body>
 </html>

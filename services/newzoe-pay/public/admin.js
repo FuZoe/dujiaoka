@@ -36,11 +36,11 @@ function esc(v) { return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&am
 
 function normStatus(o) {
   const s = o.payment?.status || o.status;
-  if (["completed", "paid", "pending", "expired"].includes(s)) return s;
+  if (["completed", "paid", "pending", "confirming", "expired"].includes(s)) return s;
   const c = Number(s);
   return ({ "-1": "expired", 1: "pending", 2: "paid", 3: "paid", 4: "completed" })[c] || "pending";
 }
-const statusMap = { pending: "待支付", paid: "已支付", completed: "已完成", expired: "已过期" };
+const statusMap = { pending: "待支付", confirming: "到账确认中", paid: "已支付", completed: "已完成", expired: "已过期" };
 const smsfResultMap = { matched: "已匹配", duplicate: "重复通知", no_pending_order: "没有同金额待支付订单", amount_not_found: "未识别到金额", ignored: "已忽略" };
 const callbackStatusMap = { success: "卡网已发货", waiting: "等待卡网回调", processing: "卡网回调处理中", manual_fulfilled: "人工已发货", error: "卡网回调失败" };
 function callbackStatusLabel(status) { return status.startsWith("http_") ? "卡网回调失败" : (callbackStatusMap[status] || status); }
@@ -129,7 +129,7 @@ function renderOrders() {
     const amountNote = baseAmountFen !== amountFen ? `<small>商品原价 ${money(baseAmountFen)}</small>` : "";
     const callbackStatus = payment?.callbackStatus || "";
     const callbackNote = callbackStatus ? `<small>${esc(callbackStatusLabel(callbackStatus))}</small>` : "";
-    const canMarkPaid = payment && s === "pending";
+    const canMarkPaid = payment && ["pending", "confirming", "expired"].includes(s);
     const isShopOrder = (payment?.source || o.source) === "dujiaoka";
     const callbackLeaseExpired = callbackStatus === "processing" && Date.parse(payment?.callbackStartedAt || 0) < Date.now() - 2 * 60 * 1000;
     const canRetryFulfillment = payment && s === "paid" && isShopOrder && !payment.callbackSuppressedAt && callbackStatus !== "success" && (callbackStatus !== "processing" || callbackLeaseExpired);
@@ -142,7 +142,7 @@ function renderOrders() {
   $$(".retry-fulfillment-button").forEach((button) => button.addEventListener("click", () => retryFulfillment(button.dataset.order)));
   empty.hidden = filtered.length > 0;
   $("#metric-all").textContent = orders.length;
-  $("#metric-pending").textContent = orders.filter((o) => normStatus(o) === "pending").length;
+  $("#metric-pending").textContent = orders.filter((o) => ["pending", "confirming"].includes(normStatus(o))).length;
   $("#metric-paid").textContent = orders.filter((o) => normStatus(o) === "paid").length;
   $("#metric-completed").textContent = orders.filter((o) => normStatus(o) === "completed").length;
 }
@@ -419,7 +419,9 @@ $("#create-form").addEventListener("submit", async (e) => {
     await loadOrders();
   } catch (ex) {
     if (ex.status === 401) { createDialog.close(); return; }
-    err.textContent = ex.data?.error === "qrcode_required" ? "请先在“收款码”页面上传你自己的微信收款码" : "请填写正确的金额（最多两位小数）";
+    if (ex.data?.error === "qrcode_required") err.textContent = "请先在“收款码”页面上传你自己的微信收款码";
+    else if (ex.data?.error === "invalid_expiry") err.textContent = "支付有效期需填写 1 至 1440 之间的整数分钟";
+    else err.textContent = "请填写正确的金额（最多两位小数）";
   }
 });
 $("#copy-link").addEventListener("click", async () => {

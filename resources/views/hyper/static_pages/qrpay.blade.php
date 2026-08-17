@@ -12,7 +12,7 @@
     <div class="col-lg-6">
         <div class="card border-primary border">
             <div class="card-body">
-                <h5 class="card-title text-primary text-center">{{ __('hyper.qrpay_order_expiration_date') }} {{ dujiaoka_config_get('order_expire_time', 5) }} {{ __('hyper.qrpay_expiration_date') }}</h5>
+                <h5 class="card-title text-primary text-center">{{ __('hyper.qrpay_order_expiration_date') }} {{ dujiaoka_config_get('order_expire_time', 20) }} {{ __('hyper.qrpay_expiration_date') }}</h5>
                 <div class="text-center">
                     <img src="data:image/png;base64,{!! base64_encode(QrCode::format('png')->size(200)->generate($qr_code)) !!}">
                 </div>

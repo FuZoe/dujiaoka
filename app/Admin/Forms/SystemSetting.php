@@ -43,7 +43,7 @@ class SystemSetting extends Form
                 ->required();
             $this->text('manage_email', admin_trans('system-setting.fields.manage_email'));
             $this->number('order_expire_time', admin_trans('system-setting.fields.order_expire_time'))
-                ->default(5)
+                ->default(20)
                 ->required();
             $this->switch('is_open_anti_red', admin_trans('system-setting.fields.is_open_anti_red'))
                 ->default(BaseModel::STATUS_CLOSE);

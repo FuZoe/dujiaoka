@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Models\BinancePayAttempt;
 use App\Models\Order;
+use App\Service\NewzoePaymentWindow;
 use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -56,7 +57,7 @@ class OrderExpired implements ShouldQueue
     {
         // 如果x分钟后还没支付就算过期
         $order = Order::query()->where('order_sn', $this->orderSN)->first();
-        if (!$order || $this->deferForBinanceSettlement($order)) {
+        if (!$order || $this->deferForBinanceSettlement($order) || $this->deferForNewzoeSettlement($order)) {
             return;
         }
         if ((int) $order->status !== Order::STATUS_WAIT_PAY) {
@@ -66,6 +67,23 @@ class OrderExpired implements ShouldQueue
             // 回退优惠券
             CouponBack::dispatch($order);
         }
+    }
+
+    private function deferForNewzoeSettlement(Order $order): bool
+    {
+        if ((int) $order->status !== Order::STATUS_WAIT_PAY
+            || optional($order->pay)->pay_check !== 'newzoe-wechat') {
+            return false;
+        }
+
+        $deadline = app(NewzoePaymentWindow::class)->responseExpiresAt($order);
+        if ($deadline->lte(Carbon::now())) {
+            return false;
+        }
+
+        self::dispatch($this->orderSN)->delay($deadline);
+
+        return true;
     }
 
     private function deferForBinanceSettlement(Order $order): bool
