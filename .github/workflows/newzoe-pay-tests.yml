@@ -48,10 +48,10 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-      - name: Use PHP 8.0
+      - name: Use PHP 7.4
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.0'
+          php-version: '7.4'
           extensions: bcmath, gd, pdo_sqlite
           coverage: none
       - name: Install PHP dependencies
