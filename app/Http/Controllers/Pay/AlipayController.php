@@ -132,6 +132,14 @@ class AlipayController extends PayController
             'app_id' => $appId,
             'ali_public_key' => $gateway->merchant_key,
             'private_key' => $gateway->merchant_pem,
+            // yansongda/pay otherwise defaults to /tmp/logs, which is not
+            // writable by PHP-FPM in a fresh container. Keep SDK diagnostics
+            // in Laravel's writable storage volume instead.
+            'log' => [
+                'file' => storage_path('logs/yansongda-pay.log'),
+                'type' => 'daily',
+                'max_files' => 7,
+            ],
         ];
 
         if ($withCallbacks) {
