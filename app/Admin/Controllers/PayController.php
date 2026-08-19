@@ -11,6 +11,7 @@ use Dcat\Admin\Show;
 use Dcat\Admin\Http\Controllers\AdminController;
 use App\Models\Pay as PayModel;
 use App\Models\BinancePaySetting;
+use App\Service\AlipayKeyGuard;
 
 class PayController extends AdminController
 {
@@ -161,7 +162,19 @@ class PayController extends AdminController
             $merchantPem = $form->textarea('merchant_pem')->required();
             if ($isAlipay) {
                 $merchantId->help(admin_trans('pay.alipay.helps.merchant_id'));
-                $merchantKey->help(admin_trans('pay.alipay.helps.merchant_key'));
+                $merchantKey
+                    ->required()
+                    ->rules([
+                        function ($attribute, $value, $fail) {
+                            if (app(AlipayKeyGuard::class)->isApplicationPublicKey(
+                                (string) $value,
+                                (string) request('merchant_pem', '')
+                            )) {
+                                $fail(admin_trans('pay.alipay.errors.application_public_key'));
+                            }
+                        },
+                    ])
+                    ->help(admin_trans('pay.alipay.helps.merchant_key'));
                 $merchantPem->help(admin_trans('pay.alipay.helps.merchant_pem'));
             }
             $form->text('pay_check')->required();

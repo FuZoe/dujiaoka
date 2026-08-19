@@ -37,10 +37,35 @@ class OrderService
      */
     private $couponService;
 
+    /**
+     * 支付服务层
+     * @var \App\Service\PayService
+     */
+    private $payService;
+
     public function __construct()
     {
         $this->goodsService = app('Service\GoodsService');
         $this->couponService = app('Service\CouponService');
+        $this->payService = app('Service\PayService');
+    }
+
+    /**
+     * Validate the selected gateway at order creation time. The browser's
+     * payment list is only a convenience and must not be trusted by itself.
+     *
+     * @throws RuleValidationException
+     */
+    public function validatorPayway(Request $request): void
+    {
+        $payway = (int) $request->input('payway');
+        $gateway = $this->payService->detail($payway);
+        if (!$gateway) {
+            throw new RuleValidationException(__('dujiaoka.prompt.pay_gateway_does_not_exist'));
+        }
+        if (!$this->payService->isAvailable($gateway)) {
+            throw new RuleValidationException(__('dujiaoka.prompt.payment_method_temporarily_unavailable'));
+        }
     }
 
 

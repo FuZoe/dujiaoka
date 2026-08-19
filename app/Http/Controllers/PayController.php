@@ -94,6 +94,11 @@ class PayController extends BaseController
         if (!$this->payGateway) {
             throw new RuleValidationException(__('dujiaoka.prompt.pay_gateway_does_not_exist'));
         }
+        // A paused channel cannot be selected by a stale or crafted request.
+        // Orders that selected it before the pause may finish their checkout.
+        if (!$this->payService->isAvailableForOrder($this->payGateway, $this->order)) {
+            throw new RuleValidationException(__('dujiaoka.prompt.payment_method_temporarily_unavailable'));
+        }
         // 临时保存支付方式
         $this->order->pay_id = $this->payGateway->id;
         $this->order->save();

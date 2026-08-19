@@ -41,6 +41,12 @@ return [
     'newzoe_pay' => [
         'payment_minutes' => env('NEWZOE_PAY_PAYMENT_MINUTES', 20),
         'settlement_grace_minutes' => env('NEWZOE_PAY_SETTLEMENT_GRACE_MINUTES', 5),
+        // New WeChat checkouts are paused during the phone's unreliable
+        // overnight forwarding period. The values are local-clock times.
+        'wechat_night_pause_enabled' => env('NEWZOE_PAY_WECHAT_NIGHT_PAUSE_ENABLED', true),
+        'wechat_pause_start' => env('NEWZOE_PAY_WECHAT_PAUSE_START', '22:00'),
+        'wechat_pause_end' => env('NEWZOE_PAY_WECHAT_PAUSE_END', '06:00'),
+        'schedule_timezone' => env('NEWZOE_PAY_SCHEDULE_TIMEZONE', 'Asia/Shanghai'),
     ],
 
     'binance_pay' => [

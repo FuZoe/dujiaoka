@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Pay;
 
 use App\Exceptions\RuleValidationException;
 use App\Http\Controllers\PayController;
+use App\Service\AlipayKeyGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Yansongda\Pay\Pay;
@@ -72,7 +73,7 @@ class AlipayController extends PayController
         if (!$order) {
             return 'error';
         }
-        $payGateway = $this->payService->detail($order->pay_id);
+        $payGateway = $this->payService->detailForNotification($order->pay_id);
         if (!$payGateway) {
             return 'error';
         }
@@ -119,6 +120,12 @@ class AlipayController extends PayController
         }
         if (trim((string) $gateway->merchant_pem) === '') {
             throw new RuleValidationException(__('dujiaoka.prompt.alipay_missing_private_key'));
+        }
+        if (app(AlipayKeyGuard::class)->isApplicationPublicKey(
+            (string) $gateway->merchant_key,
+            (string) $gateway->merchant_pem
+        )) {
+            throw new RuleValidationException(__('dujiaoka.prompt.alipay_application_public_key_misconfigured'));
         }
 
         $config = [

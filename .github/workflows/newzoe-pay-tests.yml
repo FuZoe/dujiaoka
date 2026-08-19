@@ -60,3 +60,5 @@ jobs:
         run: |
           vendor/bin/phpunit tests/Unit/NewzoePaymentWindowTest.php
           vendor/bin/phpunit tests/Unit/NewzoePaymentLifecycleTest.php
+          vendor/bin/phpunit tests/Unit/PaymentAvailabilityTest.php
+          vendor/bin/phpunit tests/Unit/AlipayKeyGuardTest.php

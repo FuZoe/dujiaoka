@@ -62,6 +62,7 @@ class OrderController extends BaseController
         DB::beginTransaction();
         try {
             $this->orderService->validatorCreateOrder($request);
+            $this->orderService->validatorPayway($request);
             $goods = $this->orderService->validatorGoods($request);
             $this->orderService->validatorLoopCarmis($request);
             // 设置商品
