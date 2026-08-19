@@ -430,6 +430,13 @@ body[data-layout=topnav] .content-page {
     color: #000;
     border: 2px solid #bdcfe1;
 }
+.pay-type img.pay-icon {
+    width: 30px;
+    height: 30px;
+    vertical-align: middle;
+    object-fit: cover;
+    border-radius: 4px;
+}
 .pay-type:hover {
     background-color: #fff;
     color: #000;

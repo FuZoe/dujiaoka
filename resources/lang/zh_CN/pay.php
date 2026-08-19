@@ -23,6 +23,13 @@ return [
     ],
     'options' => [
     ],
+    'alipay' => [
+        'helps' => [
+            'merchant_id' => '填写支付宝开放平台应用 APPID（通常为 16 位数字），不要填写支付宝账号或“商户号”。同时确认应用已签约当前支付产品。',
+            'merchant_key' => '填写与该应用匹配的支付宝公钥，不是应用公钥证书文件名。',
+            'merchant_pem' => '填写该应用对应的 RSA2 应用私钥，保留完整 PEM 内容。',
+        ],
+    ],
     'binance' => [
         'title' => '币安支付配置',
         'description' => '配置个人 Binance Pay 收款与自动查账',

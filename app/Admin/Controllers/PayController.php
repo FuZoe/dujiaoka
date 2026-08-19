@@ -154,9 +154,16 @@ class PayController extends AdminController
 
             $form->display('id');
             $form->text('pay_name')->required();
-            $form->text('merchant_id')->required();
-            $form->textarea('merchant_key');
-            $form->textarea('merchant_pem')->required();
+            $payCheck = strtolower((string) $form->model()->pay_check);
+            $isAlipay = strpos($payCheck, 'ali') === 0 || strpos($payCheck, 'zfb') !== false;
+            $merchantId = $form->text('merchant_id')->required();
+            $merchantKey = $form->textarea('merchant_key');
+            $merchantPem = $form->textarea('merchant_pem')->required();
+            if ($isAlipay) {
+                $merchantId->help(admin_trans('pay.alipay.helps.merchant_id'));
+                $merchantKey->help(admin_trans('pay.alipay.helps.merchant_key'));
+                $merchantPem->help(admin_trans('pay.alipay.helps.merchant_pem'));
+            }
             $form->text('pay_check')->required();
             $form->radio('pay_client')
                 ->options(PayModel::getClientMap())

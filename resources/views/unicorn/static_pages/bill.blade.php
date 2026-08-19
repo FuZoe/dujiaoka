@@ -25,8 +25,16 @@
                     @if($wholesale_discount_price > 0)<span>批量优惠已减 ¥{{ $wholesale_discount_price }}</span>@endif
                 </div>
             @endif
+            @php
+                $billPayCheck = strtolower((string) ($pay['pay_check'] ?? ''));
+                $billIsAlipay = strpos($billPayCheck, 'ali') === 0 || strpos($billPayCheck, 'zfb') !== false;
+                $billIsWechat = strpos($billPayCheck, 'wx') === 0 || strpos($billPayCheck, 'wechat') !== false;
+                $billPayLabel = $billPayCheck === 'binancepay'
+                    ? '前往币安支付'
+                    : ($billIsAlipay ? '前往支付宝支付' : ($billIsWechat ? '前往微信支付' : '前往支付'));
+            @endphp
             <a class="primary-action" href="{{ url('pay-gateway', ['handle' => urlencode($pay['pay_handleroute']), 'payway' => $pay['pay_check'], 'orderSN' => $order_sn]) }}">
-                {{ $pay['pay_check'] === 'binancepay' ? '前往币安支付' : '前往微信支付' }} <span aria-hidden="true">&#8594;</span>
+                {{ $billPayLabel }} <span aria-hidden="true">&#8594;</span>
             </a>
             <p class="checkout-note">支付链接与本订单绑定，请核对金额后完成付款</p>
         </section>

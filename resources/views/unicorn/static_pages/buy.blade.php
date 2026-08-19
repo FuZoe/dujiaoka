@@ -101,12 +101,22 @@
                         <fieldset class="payment-options">
                             <legend>支付方式</legend>
                             @forelse($payways as $index => $way)
-                                <label class="payment-option @if(($way['pay_check'] ?? '') === 'binancepay') binance-option @endif">
+                                @php
+                                    $payCheck = strtolower((string) ($way['pay_check'] ?? ''));
+                                    $isBinance = $payCheck === 'binancepay';
+                                    $isAlipay = strpos($payCheck, 'ali') === 0 || strpos($payCheck, 'zfb') !== false;
+                                    $isWechat = strpos($payCheck, 'wx') === 0 || strpos($payCheck, 'wechat') !== false;
+                                @endphp
+                                <label class="payment-option @if($isBinance) binance-option @elseif($isAlipay) alipay-option @endif">
                                     <input type="radio" name="payway" value="{{ $way['id'] }}" @if($index == 0) checked @endif>
-                                    @if(($way['pay_check'] ?? '') === 'binancepay')
+                                    @if($isAlipay)
+                                        <img class="payment-mark alipay-mark" src="{{ asset('assets/common/images/alipay.png') }}?v=1" alt="支付宝">
+                                    @elseif($isBinance)
                                         <span class="payment-mark binance-mark">币</span>
-                                    @else
+                                    @elseif($isWechat)
                                         <span class="payment-mark wechat-mark">微</span>
+                                    @else
+                                        <span class="payment-mark generic-mark">付</span>
                                     @endif
                                     <span><strong>{{ $way['pay_name'] }}</strong><small>支付后自动确认</small></span>
                                     <i aria-hidden="true"></i>
