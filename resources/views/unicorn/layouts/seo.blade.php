@@ -19,7 +19,7 @@
     <link rel="stylesheet" href="/assets/unicorn/css/base.css">
     <link rel="stylesheet" href="/assets/unicorn/css/common.css">
     <link rel="stylesheet" href="/assets/unicorn/css/index.css">
-    <link rel="stylesheet" href="/assets/unicorn/css/newzoe.css?v=20260814-1">
+    <link rel="stylesheet" href="/assets/unicorn/css/newzoe.css?v=20260819-1">
 </head>
 <body>
 @include('unicorn.layouts._nav')

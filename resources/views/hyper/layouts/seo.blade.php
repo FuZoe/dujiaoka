@@ -20,7 +20,7 @@
     <link href="/assets/hyper/css/vendor/jquery-jvectormap-1.2.2.css" rel="stylesheet" type="text/css">
     <link href="/assets/hyper/css/icons.min.css" rel="stylesheet" type="text/css">
     <link href="/assets/hyper/css/app-creative.min.css" rel="stylesheet" type="text/css" id="light-style">
-    <link href="/assets/hyper/css/hyper.css?v=045256" rel="stylesheet" type="text/css">
+    <link href="/assets/hyper/css/hyper.css?v=20260819-1" rel="stylesheet" type="text/css">
 </head>
 <body data-layout="topnav">
     <div class="wrapper">

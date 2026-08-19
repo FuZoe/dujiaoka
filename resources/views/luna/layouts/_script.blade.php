@@ -8,5 +8,5 @@
 </script>
 <script src="/assets/luna/layui/layui.js"></script>
 <script src="/assets/luna/js/jquery-3.4.1.min.js"></script>
-<script src="/assets/luna/main.js"></script>
+<script src="/assets/luna/main.js?v=20260819-1"></script>
 <script src="/assets/luna/layui/lay/modules/layer.js"></script>

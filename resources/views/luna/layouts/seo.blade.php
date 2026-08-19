@@ -12,7 +12,7 @@
     <meta property="og:description" content="{{ $gd_description }}">    
     <meta property="og:release_date" content="{{ $updated_at }}">
     <link rel="stylesheet" href="/assets/luna/layui/css/layui.css">
-    <link rel="stylesheet" href="/assets/luna/main.css">
+    <link rel="stylesheet" href="/assets/luna/main.css?v=20260819-1">
     <link rel="shortcut icon" href="/assets/style/favicon.ico" />
     @if(\request()->getScheme() == "https")
         <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
