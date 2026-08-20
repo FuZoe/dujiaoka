@@ -112,7 +112,7 @@
                                     @if($isAlipay)
                                         <img class="payment-mark alipay-mark" src="{{ asset('assets/common/images/alipay.png') }}?v=1" alt="支付宝">
                                     @elseif($isBinance)
-                                        <span class="payment-mark binance-mark">币</span>
+                                        <img class="payment-mark binance-mark" src="{{ asset('assets/common/images/binance.png') }}?v=20260820-1" alt="币安">
                                     @elseif($isWechat)
                                         <span class="payment-mark wechat-mark">微</span>
                                     @else

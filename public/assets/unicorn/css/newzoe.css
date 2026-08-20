@@ -127,7 +127,7 @@ a:hover { color: inherit; }
 .payment-mark { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 6px; font-size: 12px; font-weight: 800; }
 .payment-mark.alipay-mark { display: block; object-fit: cover; }
 .wechat-mark { background: #08aa57; color: #fff; }
-.binance-mark { background: #f0b90b; color: #181a20; font-size: 14px; }
+.payment-mark.binance-mark { display: block; object-fit: cover; background: #181a20; }
 .generic-mark { background: #66716b; color: #fff; }
 .payment-option.alipay-option:has(input:checked) { border-color: #1677ff; box-shadow: 0 0 0 2px rgba(22, 119, 255, .1); }
 .payment-option.binance-option:has(input:checked) { border-color: #c99400; box-shadow: 0 0 0 2px rgba(240, 185, 11, .14); }
