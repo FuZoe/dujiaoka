@@ -151,7 +151,8 @@ function orderPaymentExpired(order){return !!order&&deadline(order,'expiresAt')<
 function orderMatchExpired(order){return !!order&&deadline(order,'matchExpiresAt')<=now()}
 function publicOrder(order){
 let status=order.status;
-if(orderIsInactive(order))status='inactive';
+if(order.manualOnly&&shopStatusSettled(order.externalStatus))status='paid';
+else if(orderIsInactive(order))status='inactive';
 else if(order.status==='pending'&&orderMatchExpired(order))status='expired';
 else if(order.status==='pending'&&orderPaymentExpired(order))status='confirming';
 return pubOrder(order,status)
@@ -655,10 +656,11 @@ if(!/^[A-Za-z0-9_-]{16,80}$/.test(cid))return sendJson(res,400,{error:'invalid_c
 if(oid&&!orderById(oid))return sendJson(res,404,{error:'order_not_found'});
 res.writeHead(200,{'Cache-Control':'no-cache, no-transform','Connection':'keep-alive','Content-Type':'text/event-stream; charset=utf-8','X-Accel-Buffering':'no'});res.flushHeaders();
 const co=oid?orderById(oid):null;
-if(co?.status==='paid'){sendEvent(res,'status',publicOrder(co));return res.end()}
+const publicStatus=co?publicOrder(co):null;
+if(publicStatus?.status==='paid'){sendEvent(res,'status',publicStatus);return res.end()}
 if(orderIsInactive(co)){sendEvent(res,'status',{id:co.id,status:'inactive'});return res.end()}
 if(co&&orderMatchExpired(co)){sendEvent(res,'status',{id:co.id,status:'expired'});return res.end()}
-sendEvent(res,'status',co?publicOrder(co):{status:'waiting'});
+sendEvent(res,'status',publicStatus||{status:'waiting'});
 const streams=clients.get(cid)||new Set();const stream={orderId:oid,res};streams.add(stream);clients.set(cid,streams);
 const hb=setInterval(()=>res.write(': heartbeat\n\n'),20000);
 req.on('close',()=>{clearInterval(hb);streams.delete(stream);if(streams.size===0)clients.delete(cid)});return}
