@@ -1492,6 +1492,47 @@ test('Alipay admin listing keeps remote status and canonicalizes external ids', 
   });
 });
 
+test('remote-completed Alipay orders stay paid locally after their checkout window', async () => {
+  const shopOrder = {
+    amountFen: 1503,
+    callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+    createdAt: new Date(NOW - 60 * 60 * 1000).toISOString(),
+    expiresAt: new Date(NOW - 40 * 60 * 1000).toISOString(),
+    id: 'ALIPAYREMOTE03',
+    matchExpiresAt: new Date(NOW - 35 * 60 * 1000).toISOString(),
+    paymentMethod: 'aliweb',
+    paymentName: '支付宝',
+    returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/ALIPAYREMOTE03',
+    source: 'dujiaoka',
+    status: 4,
+    title: '远端回调已完成',
+    updatedAt: new Date(NOW - 59 * 60 * 1000).toISOString()
+  };
+  await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+    const response = await fetch(`${baseUrl}/api/admin/orders`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const order = (await response.json()).orders.find((item) => item.id === shopOrder.id);
+    assert.equal(order.status, 'completed');
+    assert.equal(order.payment.externalStatus, 'completed');
+    assert.equal(order.payment.status, 'paid');
+    assert.equal(order.payment.paidAt, shopOrder.updatedAt);
+  }, {
+    adminPassword: 'test-admin-password',
+    fetchImpl: async (url) => {
+      if (String(url) === 'https://shop.test/api/newzoe/orders') return { ok: true, status: 200, json: async () => ({ orders: [shopOrder] }) };
+      return { ok: true, status: 200 };
+    },
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters',
+    shopOrdersUrl: 'https://shop.test/api/newzoe/orders'
+  });
+});
+
 test('malformed external Alipay amounts are not materialized for manual settlement', async () => {
   const shopOrders = [
     {

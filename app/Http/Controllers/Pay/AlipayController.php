@@ -91,7 +91,19 @@ class AlipayController extends PayController
                     ]);
                     return 'success';
                 }
-                $this->orderProcessService->completedOrder($result->out_trade_no, $result->total_amount, $result->trade_no);
+                // Alipay's asynchronous notification can arrive well after the
+                // local checkout window (for example after a provider retry).
+                // The SDK has already verified the signature and the amount,
+                // so a successful notification is authoritative and must be
+                // allowed to recover an order that the expiry job raced ahead
+                // of. Without this override, a real payment stays expired and
+                // the customer never reaches the normal delivery flow.
+                $this->orderProcessService->completedOrder(
+                    $result->out_trade_no,
+                    $result->total_amount,
+                    $result->trade_no,
+                    true
+                );
             }
             return 'success';
         } catch (\Throwable $exception) {
