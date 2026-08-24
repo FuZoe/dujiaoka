@@ -181,6 +181,30 @@ Returns a payment URL for an existing unpaid order. The optional JSON field `pay
 { "payment_method": "binancepay" }
 ```
 
+When `payment_method` is `binancepay`, this response also creates or reuses the
+active collision-free quote and includes the verified receiving deep link for
+QR rendering:
+
+```json
+{
+  "payment_required": true,
+  "payment": {
+    "method": "binancepay",
+    "url": "https://shop.newzoe.cloud/pay-gateway/...",
+    "qr_payload": "https://app.binance.com/uni-qr/RECEIVE_CODE",
+    "expected_usdt": "1.38",
+    "currency": "USDT",
+    "quote_expires_at": "2026-08-24T12:15:00+08:00"
+  }
+}
+```
+
+The Telegram bot renders `qr_payload` into an image and sends it in the chat;
+it does not add a URL button for Binance. WeChat and Alipay continue to use the
+normal `payment.url` button. The `POST /orders` response stays URL-only until
+the integration explicitly opens `/pay`, so an unused order does not consume a
+Binance quote window.
+
 Payment callbacks from the configured provider call the same settlement service used by the browser checkout. A paid order returns `409 order_already_paid` from this endpoint.
 
 ### `GET /orders/{order_id}`

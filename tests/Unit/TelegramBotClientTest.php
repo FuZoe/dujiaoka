@@ -66,6 +66,52 @@ class TelegramBotClientTest extends TestCase
         $this->assertSame(124, $messageId);
     }
 
+    public function test_it_sends_a_photo_as_multipart_with_json_encoded_keyboard(): void
+    {
+        config(['services.telegram.proxy' => null]);
+        $http = Mockery::mock(ClientInterface::class);
+        $http->shouldReceive('post')
+            ->once()
+            ->withArgs(function (string $url, array $options): bool {
+                if ($url !== 'https://api.telegram.org/botTOKEN/sendPhoto'
+                    || !isset($options['multipart'])
+                    || isset($options['json'])
+                ) {
+                    return false;
+                }
+
+                $fields = [];
+                foreach ($options['multipart'] as $part) {
+                    $fields[$part['name']] = $part;
+                }
+                $keyboard = json_decode((string) ($fields['reply_markup']['contents'] ?? ''), true);
+
+                return $fields['chat_id']['contents'] === '1001'
+                    && $fields['photo']['contents'] === 'PNG_BYTES'
+                    && $fields['photo']['filename'] === 'binance-payment.png'
+                    && $fields['photo']['headers']['Content-Type'] === 'image/png'
+                    && $fields['caption']['contents'] === 'caption'
+                    && $keyboard['inline_keyboard'][0][0]['callback_data'] === 'shop:order:ORDER123';
+            })
+            ->andReturn(new Response(200, [], json_encode([
+                'ok' => true,
+                'result' => ['message_id' => 125],
+            ])));
+
+        $messageId = (new TelegramBotClient($http))->sendPhoto(
+            'TOKEN',
+            ' 1001 ',
+            'PNG_BYTES',
+            'caption',
+            ['reply_markup' => ['inline_keyboard' => [[[
+                'text' => '刷新',
+                'callback_data' => 'shop:order:ORDER123',
+            ]]]]]
+        );
+
+        $this->assertSame(125, $messageId);
+    }
+
     public function test_it_redacts_the_token_from_http_failures(): void
     {
         config(['services.telegram.proxy' => null]);

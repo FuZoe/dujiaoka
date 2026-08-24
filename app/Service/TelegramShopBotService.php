@@ -6,6 +6,7 @@ use App\Service\ShopApiClient;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 use RuntimeException;
+use SimpleSoftwareIO\QrCode\Facades\QrCode;
 use Throwable;
 
 class TelegramShopBotService
@@ -482,17 +483,24 @@ class TelegramShopBotService
             $text .= "\n请在 ".$order['expires_at'].' 前完成支付。';
         }
 
-        $keyboard = [];
-        if (!empty($payment['url'])) {
-            $keyboard[] = [[
-                'text' => '🚀 前往支付',
-                'url' => (string) $payment['url'],
-            ]];
+        if ($this->isBinancePayment($method)) {
+            // The Binance checkout page is still available on the website, but
+            // Telegram users receive the exact quote and QR code in-chat.
+            $paymentData = $this->api->pay($orderSN, $method);
+            if (array_key_exists('payment_required', $paymentData)
+                && !$paymentData['payment_required']
+            ) {
+                $this->showOrder($chatId, $orderSN, $origin);
+                return;
+            }
+            $payment = (array) ($paymentData['payment'] ?? []);
+            if (!empty($payment['qr_payload']) && !empty($payment['expected_usdt'])) {
+                $this->sendBinancePayment($chatId, $text, $payment, $orderSN, $origin);
+                return;
+            }
         }
-        $keyboard[] = [
-            ['text' => '🔄 刷新状态', 'callback_data' => 'shop:order:'.$orderSN],
-            ['text' => '📦 我的订单', 'callback_data' => 'shop:orders'],
-        ];
+
+        $keyboard = $this->orderKeyboard($orderSN, $payment);
         $this->respond($chatId, $text, ['inline_keyboard' => $keyboard], $origin);
     }
 
@@ -535,19 +543,31 @@ class TelegramShopBotService
             $text .= '支付截止：'.(string) $order['expires_at']."\n";
         }
 
+        $binancePayment = null;
         $keyboard = [];
         if ($status === 'wait_pay') {
             try {
+                $paymentMethod = (string) ($order['payment_method'] ?? '');
                 $paymentData = $this->api->pay(
                     $orderSN,
-                    (string) ($order['payment_method'] ?? '')
+                    $paymentMethod
                 );
+                if (array_key_exists('payment_required', $paymentData)
+                    && !$paymentData['payment_required']
+                ) {
+                    $this->showOrder($chatId, $orderSN, $origin);
+                    return;
+                }
                 $payment = (array) ($paymentData['payment'] ?? []);
-                if (!empty($payment['url'])) {
-                    $keyboard[] = [[
-                        'text' => '🚀 前往支付',
-                        'url' => (string) $payment['url'],
-                    ]];
+                if ($this->isBinancePayment($paymentMethod)) {
+                    $binancePayment = $payment;
+                } else {
+                    if (!empty($payment['url'])) {
+                        $keyboard[] = [[
+                            'text' => '🚀 前往支付',
+                            'url' => (string) $payment['url'],
+                        ]];
+                    }
                 }
             } catch (Throwable $exception) {
                 $this->reportApiFailure($exception);
@@ -563,7 +583,101 @@ class TelegramShopBotService
             ['text' => '🔄 刷新', 'callback_data' => 'shop:order:'.$orderSN],
             ['text' => '🛍️ 购物', 'callback_data' => 'shop:products:0'],
         ];
+        if ($binancePayment !== null
+            && !empty($binancePayment['qr_payload'])
+            && !empty($binancePayment['expected_usdt'])
+        ) {
+            $this->sendBinancePayment($chatId, $text, $binancePayment, $orderSN, $origin);
+            return;
+        }
         $this->respond($chatId, $text, ['inline_keyboard' => $keyboard], $origin);
+    }
+
+    private function isBinancePayment(string $method): bool
+    {
+        return strtolower(trim($method)) === 'binancepay';
+    }
+
+    private function orderKeyboard(string $orderSN, array $payment = []): array
+    {
+        $keyboard = [];
+        if (!$this->isBinancePayment((string) ($payment['method'] ?? ''))
+            && !empty($payment['url'])
+        ) {
+            $keyboard[] = [[
+                'text' => '🚀 前往支付',
+                'url' => (string) $payment['url'],
+            ]];
+        }
+        $keyboard[] = [
+            ['text' => '🔄 刷新状态', 'callback_data' => 'shop:order:'.$orderSN],
+            ['text' => '📦 我的订单', 'callback_data' => 'shop:orders'],
+        ];
+
+        return $keyboard;
+    }
+
+    private function sendBinancePayment(
+        string $chatId,
+        string $orderText,
+        array $payment,
+        string $orderSN,
+        array $origin = []
+    ): void {
+        $qrPayload = trim((string) ($payment['qr_payload'] ?? ''));
+        $expected = trim((string) ($payment['expected_usdt'] ?? ''));
+        if ($qrPayload === '' || $expected === '') {
+            throw new RuntimeException('币安支付二维码或应付金额缺失。');
+        }
+
+        $currency = strtoupper(trim((string) ($payment['currency'] ?? 'USDT')));
+        $caption = $orderText
+            ."\n\n支付方式：币安支付\n"
+            .'应付：'.$expected.' '.$currency."\n";
+        if (!empty($payment['quote_expires_at'])) {
+            $caption .= '报价有效至：'.(string) $payment['quote_expires_at']."\n";
+        }
+        $caption .= "\n请使用币安 App 扫描下方二维码，支付准确金额。";
+        // Telegram limits photo captions to 1024 characters. Bound only the
+        // untrusted order summary so amount, expiry, and payment instructions
+        // remain visible even when a product name is unusually long.
+        $orderTextLength = mb_strlen($orderText, 'UTF-8');
+        $captionLength = mb_strlen($caption, 'UTF-8');
+        $fixedCaption = mb_substr($caption, $orderTextLength, $captionLength, 'UTF-8');
+        $summaryLimit = max(0, 1024 - mb_strlen($fixedCaption, 'UTF-8'));
+        $summary = mb_substr($orderText, 0, $summaryLimit, 'UTF-8');
+        $caption = $summary.$fixedCaption;
+        $keyboard = ['reply_markup' => ['inline_keyboard' => $this->orderKeyboard($orderSN, $payment)]];
+
+        // A callback message cannot be converted into a photo with
+        // editMessageText. Update it when possible, then send the QR as the
+        // next message so the customer always gets an image.
+        if (!empty($origin['message_id'])) {
+            try {
+                $this->telegram->editMessageText(
+                    $this->token(),
+                    $chatId,
+                    (int) $origin['message_id'],
+                    $orderText."\n\n币安二维码已发送，请扫描下一条消息。",
+                    $keyboard
+                );
+            } catch (Throwable $exception) {
+                // The callback origin may already have been edited; the photo
+                // message remains the source of truth.
+            }
+        }
+
+        $png = (string) QrCode::format('png')
+            ->size(420)
+            ->margin(1)
+            ->generate($qrPayload);
+        $this->telegram->sendPhoto(
+            $this->token(),
+            $chatId,
+            $png,
+            $caption,
+            $keyboard
+        );
     }
 
     private function showDelivery(string $chatId, string $orderSN, array $origin = []): void

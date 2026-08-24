@@ -113,6 +113,19 @@ class TelegramShopBotServiceTest extends TestCase
                     'payment' => ['url' => 'https://pay.example.test/ORDER123'],
                 ];
             });
+        $api->shouldReceive('pay')
+            ->once()
+            ->with('ORDER123', 'binancepay')
+            ->andReturn([
+                'payment_required' => true,
+                'payment' => [
+                    'method' => 'binancepay',
+                    'qr_payload' => 'https://app.binance.com/uni-qr/Sg9jgWUd',
+                    'expected_usdt' => '1.38',
+                    'currency' => 'USDT',
+                    'quote_expires_at' => '2026-08-24T12:15:00+08:00',
+                ],
+            ]);
         $telegram = Mockery::mock(TelegramBotClient::class);
         $telegram->shouldReceive('editMessageText')
             ->twice()
@@ -129,8 +142,27 @@ class TelegramShopBotServiceTest extends TestCase
 
                 return strpos($text, '订单已创建') !== false
                     && strpos($text, 'ORDER123') !== false
-                    && $payload['reply_markup']['inline_keyboard'][0][0]['url'] === 'https://pay.example.test/ORDER123';
+                    && strpos($text, '币安二维码已发送') !== false
+                    && !isset($payload['reply_markup']['inline_keyboard'][0][0]['url']);
             });
+        $telegram->shouldReceive('sendPhoto')
+            ->once()
+            ->withArgs(function (
+                string $token,
+                string $chatId,
+                string $photo,
+                string $caption,
+                array $payload
+            ): bool {
+                return $token === 'BOT_TOKEN'
+                    && $chatId === '1003'
+                    && $photo !== ''
+                    && strpos($caption, '应付：1.38 USDT') !== false
+                    && strpos($caption, 'https://app.binance.com/uni-qr/Sg9jgWUd') === false
+                    && !isset($payload['reply_markup']['inline_keyboard'][0][0]['url'])
+                    && $payload['reply_markup']['inline_keyboard'][0][0]['callback_data'] === 'shop:order:ORDER123';
+            })
+            ->andReturn(126);
 
         $service = new TelegramShopBotService($api, $telegram);
         Cache::put('telegram-shop:session:1003', [
@@ -159,5 +191,50 @@ class TelegramShopBotServiceTest extends TestCase
         $this->assertCount(2, $idempotencyKeys);
         $this->assertSame($idempotencyKeys[0], $idempotencyKeys[1]);
         $this->assertStringStartsWith('tg-1003-', $idempotencyKeys[0]);
+    }
+
+    public function test_non_binance_payment_keeps_the_external_checkout_button(): void
+    {
+        $api = Mockery::mock(ShopApiClient::class);
+        $api->shouldReceive('createOrder')->once()->andReturn([
+            'order' => [
+                'id' => 'ALIPAY123',
+                'amount' => '9.90',
+                'expires_at' => '2026-08-24T12:20:00+08:00',
+            ],
+            'payment' => [
+                'method' => 'alipay',
+                'url' => 'https://shop.example.test/pay/ALIPAY123',
+            ],
+        ]);
+        $api->shouldNotReceive('pay');
+        $telegram = Mockery::mock(TelegramBotClient::class);
+        $telegram->shouldReceive('editMessageText')
+            ->once()
+            ->withArgs(function (string $token, string $chatId, int $messageId, string $text, array $payload): bool {
+                return $token === 'BOT_TOKEN'
+                    && $chatId === '1004'
+                    && $messageId === 90
+                    && strpos($text, 'ALIPAY123') !== false
+                    && $payload['reply_markup']['inline_keyboard'][0][0]['url'] === 'https://shop.example.test/pay/ALIPAY123';
+            });
+        $telegram->shouldNotReceive('sendPhoto');
+
+        Cache::put('telegram-shop:session:1004', [
+            'step' => 'payment',
+            'product' => ['id' => 12, 'name' => '云服务套餐', 'input_fields' => []],
+            'quantity' => 1,
+            'email' => 'buyer@example.test',
+            'search_password' => 'lookup-password',
+            'inputs' => [],
+        ]);
+
+        (new TelegramShopBotService($api, $telegram))->handleCallback([
+            'data' => 'shop:method:alipay',
+            'message' => [
+                'message_id' => 90,
+                'chat' => ['id' => 1004, 'type' => 'private'],
+            ],
+        ]);
     }
 }

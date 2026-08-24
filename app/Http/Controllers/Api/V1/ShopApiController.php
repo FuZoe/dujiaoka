@@ -5,11 +5,13 @@ namespace App\Http\Controllers\Api\V1;
 use App\Exceptions\RuleValidationException;
 use App\Http\Controllers\Controller;
 use App\Models\BaseModel;
+use App\Models\BinancePaySetting;
 use App\Models\Carmis;
 use App\Models\Goods;
 use App\Models\Order;
 use App\Models\Pay;
 use App\Service\GoodsService;
+use App\Service\BinancePayQuoteService;
 use App\Service\NewzoePaymentWindow;
 use App\Service\OrderProcessService;
 use App\Service\OrderService;
@@ -265,9 +267,18 @@ class ShopApiController extends Controller
             ]);
         }
 
+        try {
+            $payment = $this->paymentPayload($order, true);
+        } catch (RuleValidationException $exception) {
+            return $this->failure('payment_error', $exception->getMessage(), 409);
+        } catch (\Throwable $exception) {
+            report($exception);
+            return $this->failure('payment_error', 'The payment channel could not be prepared.', 409);
+        }
+
         return $this->success([
             'payment_required' => true,
-            'payment' => $this->paymentPayload($order),
+            'payment' => $payment,
             'order' => $this->orderPayload($order),
         ]);
     }
@@ -491,7 +502,7 @@ class ShopApiController extends Controller
         ];
     }
 
-    private function paymentPayload(Order $order): array
+    private function paymentPayload(Order $order, bool $includeBinanceDetails = false): array
     {
         $gateway = $order->pay ?: ($order->pay_id ? $this->payService->detailForNotification((int) $order->pay_id) : null);
         $payable = (int) $order->status === Order::STATUS_WAIT_PAY && !$this->isPaymentExpired($order);
@@ -504,7 +515,7 @@ class ShopApiController extends Controller
             ];
         }
 
-        return [
+        $payload = [
             'required' => $payable && bccomp((string) $order->actual_price, '0.00', 2) !== 0,
             'url' => $payable ? url('pay-gateway', [
                 'handle' => urlencode((string) $gateway->pay_handleroute),
@@ -515,6 +526,28 @@ class ShopApiController extends Controller
             'name' => (string) $gateway->pay_name,
             'expires_at' => $this->expiresAt($order)->toIso8601String(),
         ];
+
+        // The Telegram shop needs the exact, collision-free USDT amount and
+        // the same verified receiving link as the browser checkout. Quotes are
+        // created only when /pay is called so merely creating an order does not
+        // consume its Binance quote window.
+        if ($includeBinanceDetails
+            && $payable
+            && strtolower((string) $gateway->pay_check) === 'binancepay'
+        ) {
+            $attempt = app(BinancePayQuoteService::class)->quote($order);
+            $setting = BinancePaySetting::current();
+            if (!$setting->hasOfficialReceiveUrl()) {
+                throw new \RuntimeException('Binance Pay receiving QR is not configured.');
+            }
+
+            $payload['qr_payload'] = trim((string) $setting->receive_qr_payload);
+            $payload['expected_usdt'] = (string) $attempt->expected_usdt;
+            $payload['currency'] = (string) $attempt->currency;
+            $payload['quote_expires_at'] = optional($attempt->expires_at)->toIso8601String();
+        }
+
+        return $payload;
     }
 
     private function orderPayload(Order $order): array

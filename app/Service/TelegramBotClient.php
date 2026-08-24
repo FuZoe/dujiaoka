@@ -59,6 +59,71 @@ class TelegramBotClient
         return (int) $payload['result']['message_id'];
     }
 
+    /**
+     * Send a PNG image with an optional caption and inline keyboard.
+     *
+     * Telegram requires multipart form data for uploaded photos. Keeping this
+     * here instead of making the shop service call Guzzle directly also keeps
+     * proxy, timeout, and error handling identical to text messages.
+     */
+    public function sendPhoto(
+        string $token,
+        string $chatId,
+        string $photo,
+        string $caption = '',
+        array $payload = []
+    ): int {
+        $multipart = [
+            [
+                'name' => 'chat_id',
+                'contents' => trim($chatId),
+            ],
+            [
+                'name' => 'photo',
+                'contents' => $photo,
+                'filename' => 'binance-payment.png',
+                'headers' => ['Content-Type' => 'image/png'],
+            ],
+        ];
+
+        if ($caption !== '') {
+            $multipart[] = [
+                'name' => 'caption',
+                'contents' => $caption,
+            ];
+        }
+
+        foreach ($payload as $name => $value) {
+            if (is_array($value)) {
+                $value = json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            } elseif (is_bool($value)) {
+                $value = $value ? 'true' : 'false';
+            }
+            $multipart[] = [
+                'name' => (string) $name,
+                'contents' => (string) $value,
+            ];
+        }
+
+        try {
+            $response = $this->client->post(
+                'https://api.telegram.org/bot'.$token.'/sendPhoto',
+                array_merge($this->requestOptions, [
+                    'multipart' => $multipart,
+                ])
+            );
+        } catch (Throwable $exception) {
+            throw new RuntimeException('Telegram API request failed.');
+        }
+        $responsePayload = json_decode((string) $response->getBody(), true);
+
+        if (empty($responsePayload['ok']) || empty($responsePayload['result']['message_id'])) {
+            throw new RuntimeException('Telegram returned an invalid response.');
+        }
+
+        return (int) $responsePayload['result']['message_id'];
+    }
+
     public function answerCallbackQuery(
         string $token,
         string $callbackQueryId,
