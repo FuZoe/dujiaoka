@@ -80,16 +80,20 @@ class OrderService
      * @copyright assimon<ashang@utf8.hk>
      * @link      http://utf8.hk/
      */
-    public function validatorCreateOrder(Request $request): void
+    public function validatorCreateOrder(Request $request, bool $skipBrowserChallenges = false): void
     {
-        $validator = Validator::make($request->all(), [
+        $rules = [
             'gid' => 'required' ,
             'email' => ['required', 'email'],
             'payway' => ['required', 'integer'],
             'search_pwd' => [new SearchPwd()],
             'by_amount' => ['required', 'integer', 'min:1'],
-            'img_verify_code' => [new VerifyImg()],
-        ], [
+        ];
+        if (!$skipBrowserChallenges) {
+            $rules['img_verify_code'] = [new VerifyImg()];
+        }
+
+        $validator = Validator::make($request->all(), $rules, [
             'by_amount.required' =>  __('dujiaoka.prompt.buy_amount_format_error'),
             'by_amount.integer' =>  __('dujiaoka.prompt.buy_amount_format_error'),
             'by_amount.min' =>  __('dujiaoka.prompt.buy_amount_format_error'),
@@ -104,7 +108,8 @@ class OrderService
         }
         // 极验验证
         if (
-            dujiaoka_config_get('is_open_geetest') == BaseModel::STATUS_OPEN
+            !$skipBrowserChallenges
+            && dujiaoka_config_get('is_open_geetest') == BaseModel::STATUS_OPEN
             &&
             !Validator::make($request->all(),
                 ['geetest_challenge' => 'geetest',],

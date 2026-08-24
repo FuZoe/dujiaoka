@@ -6,6 +6,16 @@ Route::get('newzoe/orders', 'NewzoeApiController@orders');
 Route::get('telegram/webhook/health', 'TelegramWebhookController@health');
 Route::post('telegram/webhook', 'TelegramWebhookController@webhook')->middleware('throttle:120,1');
 
+Route::prefix('v1')->middleware('shop.api')->namespace('Api\\V1')->group(function () {
+    Route::get('products', 'ShopApiController@products');
+    Route::get('payment-methods', 'ShopApiController@paymentMethods');
+    Route::post('orders', 'ShopApiController@createOrder');
+    Route::get('orders/{orderSN}', 'ShopApiController@order');
+    Route::post('orders/{orderSN}/pay', 'ShopApiController@pay');
+    Route::get('orders/{orderSN}/delivery', 'ShopApiController@delivery');
+    Route::post('orders/{orderSN}/deliver', 'ShopApiController@deliver');
+});
+
 /*
 |--------------------------------------------------------------------------
 | API Routes

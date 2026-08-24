@@ -38,6 +38,15 @@ return [
         'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
     ],
 
+    // Owner API credentials. Keep these separate from payment-provider
+    // secrets so rotating an integration does not interrupt checkout.
+    'shop_api' => [
+        'key' => env('DUJIAOKA_API_KEY', ''),
+        'secret' => env('DUJIAOKA_API_SECRET', ''),
+        'timestamp_tolerance' => env('DUJIAOKA_API_TIMESTAMP_TOLERANCE', 300),
+        'idempotency_ttl' => env('DUJIAOKA_API_IDEMPOTENCY_TTL', 86400),
+    ],
+
     'newzoe_pay' => [
         'payment_minutes' => env('NEWZOE_PAY_PAYMENT_MINUTES', 20),
         'settlement_grace_minutes' => env('NEWZOE_PAY_SETTLEMENT_GRACE_MINUTES', 5),
