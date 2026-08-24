@@ -451,9 +451,11 @@ class TelegramShopBotService
         // Persist the key before the network call. Telegram can deliver the same
         // callback more than once, and a retry must replay the original order.
         $idempotencyKey = (string) ($state['idempotency_key'] ?? '');
-        if ($idempotencyKey === '') {
+        $idempotencyMethod = (string) ($state['idempotency_method'] ?? '');
+        if ($idempotencyKey === '' || $idempotencyMethod !== $method) {
             $idempotencyKey = 'tg-'.$chatId.'-'.Str::random(20);
             $state['idempotency_key'] = $idempotencyKey;
+            $state['idempotency_method'] = $method;
             $this->putState($chatId, $state);
         }
         $result = $this->api->createOrder($payload, $idempotencyKey);
