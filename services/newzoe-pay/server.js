@@ -21,6 +21,14 @@ function rdSec(v,f){if(v)return String(v).trim();if(f)return fs.readFileSync(f,'
 function signPayload(sec,ts,b){return crypto.createHmac('sha256',sec).update(ts+'.').update(b).digest('hex')}
 function signSmsF(sec,ts){return crypto.createHmac('sha256',sec).update(ts+'\n'+sec).digest('base64')}
 function yuanToFen(v){const m=/^(\d+)(?:\.(\d{1,2}))?$/.exec(v);if(!m)return null;const f=Number(m[1])*100+Number((m[2]||'').padEnd(2,'0'));return Number.isSafeInteger(f)?f:null}
+// Amounts crossing the shop boundary are integer fen. Keep parsing strict so
+// values such as scientific notation, decimals, and unsafe integers cannot
+// silently become a different amount through Number().
+function parseAmountFen(value){
+if(typeof value==='number')return Number.isSafeInteger(value)?value:null;
+if(typeof value!=='string'||!/^(?:0|[1-9]\d*)$/.test(value))return null;
+const amount=Number(value);return Number.isSafeInteger(amount)?amount:null
+}
 function extractAmts(t){const a=new Set();const p=/(?:[\u00a5\uffe5]\s*(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s*\u5143)/g;for(const m of t.matchAll(p)){const f=yuanToFen(m[1]||m[2]);if(f!==null)a.add(f)}return[...a]}
 function sendJson(res,code,data){const b=JSON.stringify(data);res.writeHead(code,{'Cache-Control':'no-store','Content-Length':Buffer.byteLength(b),'Content-Type':'application/json; charset=utf-8'});res.end(b)}
 function sendHtml(res,code,body){res.writeHead(code,{'Cache-Control':'no-store','Content-Length':Buffer.byteLength(body),'Content-Type':'text/html; charset=utf-8','X-Content-Type-Options':'nosniff'});res.end(body)}
@@ -29,7 +37,27 @@ function parseCookies(req){return Object.fromEntries(String(req.headers.cookie||
 
 function loadState(f){try{const p=JSON.parse(fs.readFileSync(f,'utf8'));return{orders:Array.isArray(p.orders)?p.orders.slice(-2000):[],smsfEvents:Array.isArray(p.smsfEvents)?p.smsfEvents.slice(-SMSF_EVENT_LIMIT):[],txns:Array.isArray(p.transactions)?p.transactions.slice(-500):Array.isArray(p.txns)?p.txns.slice(-500):[],users:Array.isArray(p.users)?p.users:[]}}catch(e){if(e.code!=='ENOENT')console.error('state:',e);return{orders:[],smsfEvents:[],txns:[],users:[]}}}
 function saveState(f,s){const d=path.dirname(f);fs.mkdirSync(d,{recursive:true});const t=f+'.'+process.pid+'.tmp';const stored={orders:s.orders,smsfEvents:s.smsfEvents,transactions:s.txns,users:s.users};fs.writeFileSync(t,JSON.stringify(stored,null,2),{mode:0o600});fs.renameSync(t,f)}
-function pubOrder(o,status=o.status){return{amountFen:o.amountFen,baseAmountFen:o.baseAmountFen||o.amountFen,callbackStartedAt:o.callbackStartedAt||null,callbackStatus:o.callbackStatus||'',callbackSuppressedAt:o.callbackSuppressedAt||null,createdAt:o.createdAt,expiresAt:o.expiresAt||null,id:o.id,manualPaidBy:o.manualPaidBy||'',matchExpiresAt:o.matchExpiresAt||null,paidAt:o.paidAt||null,paymentMethod:o.paymentMethod||'',returnUrl:o.returnUrl||'',source:o.source,status,title:o.title,payee:o.payee||''}}
+function pubOrder(o,status=o.status){return{amountFen:o.amountFen,baseAmountFen:o.baseAmountFen||o.amountFen,callbackStartedAt:o.callbackStartedAt||null,callbackStatus:o.callbackStatus||'',callbackSuppressedAt:o.callbackSuppressedAt||null,callbackSuppressionError:o.callbackSuppressionError||'',createdAt:o.createdAt,expiresAt:o.expiresAt||null,externalStatus:o.externalStatus||'',id:o.id,manualOnly:!!o.manualOnly,manualPaidBy:o.manualPaidBy||'',manualSuppressUrl:o.manualSuppressUrl||'',matchExpiresAt:o.matchExpiresAt||null,paidAt:o.paidAt||null,paymentMethod:o.paymentMethod||'',paymentMethodOriginal:o.paymentMethodOriginal||o.paymentMethod||'',returnUrl:o.returnUrl||'',source:o.source,status,title:o.title,payee:o.payee||''}}
+function normalizePaymentMethod(value,name=''){
+const raw=String(value||'').trim().toLowerCase();const label=String(name||'').trim();
+if(raw==='alipay'||raw==='aliweb'||raw==='alipayscan'||raw==='aliwap'||raw==='zfbf2f'||raw.includes('alipay')||raw.includes('zfb')||label.includes('支付宝'))return'alipay';
+if(raw==='newzoe-wechat'||raw==='wechat'||raw.includes('wechat')||label.includes('微信'))return'wechat';
+if(raw==='binancepay'||raw.includes('binance')||label.includes('币安'))return'binancepay';
+return raw;
+}
+function shopStatusKey(value){
+const raw=String(value??'').trim().toLowerCase();
+if(raw==='-1'||raw==='expired')return'expired';
+if(raw==='1'||raw==='wait_pay'||raw==='pending')return'pending';
+if(raw==='2'||raw==='3'||raw==='paid'||raw==='processing')return'paid';
+if(raw==='4'||raw==='completed')return'completed';
+if(raw==='5'||raw==='failure'||raw==='failed')return'failed';
+if(raw==='6'||raw==='abnormal')return'abnormal';
+return raw||'pending';
+}
+function sameOriginUrl(value,fallback,allowedOrigin){
+try{const parsed=new URL(String(value||''));const base=new URL(String(allowedOrigin));if(parsed.origin!==base.origin||parsed.protocol!==base.protocol)return fallback;return parsed.toString()}catch{return fallback}
+}
 
 function hashPw(pw){const s=crypto.randomBytes(16).toString('hex');return s+':'+crypto.scryptSync(pw,s,64).toString('hex')}
 function verifyPw(pw,stored){const[s,h]=stored.split(':');if(!s||!h)return false;return secureEq(h,crypto.scryptSync(pw,s,64).toString('hex'))}
@@ -63,7 +91,9 @@ if(superPassword){const a=userByName(state,'admin');if(a)a.password=hashPw(super
 let stateMigrated=false;
 for(const order of state.orders){
 const expectedPayee=order.source==='dujiaoka'?'admin':(order.payee||'admin');
-if(order.payee!==expectedPayee){order.payee=expectedPayee;stateMigrated=true}
+  const canonicalId=String(order.id||'').toUpperCase();
+  if(canonicalId&&order.id!==canonicalId){order.id=canonicalId;stateMigrated=true}
+  if(order.payee!==expectedPayee){order.payee=expectedPayee;stateMigrated=true}
 if(!Number.isInteger(order.baseAmountFen)&&Number.isInteger(order.amountFen)){order.baseAmountFen=order.amountFen;stateMigrated=true}
 if(order.status==='paid'&&!order.settledAt&&(order.updatedAt||order.paidAt)){order.settledAt=order.updatedAt||order.paidAt;stateMigrated=true}
 const reference=Date.parse(order.activatedAt||order.createdAt||'');
@@ -109,7 +139,7 @@ fs.mkdirSync(qrcodeDir,{recursive:true});
 
 function persist(){if(state.orders.length>2000)state.orders.splice(0,state.orders.length-2000);if(state.smsfEvents.length>SMSF_EVENT_LIMIT)state.smsfEvents.splice(0,state.smsfEvents.length-SMSF_EVENT_LIMIT);if(state.txns.length>500)state.txns.splice(0,state.txns.length-500);saveState(stateFile,state)}
 if(stateMigrated)persist();
-function orderById(id){return state.orders.find(i=>i.id===id)}
+  function orderById(id){const key=String(id||'').toUpperCase();return state.orders.find(i=>String(i.id||'').toUpperCase()===key)}
 function orderPayee(order){return order?.payee||'admin'}
 function orderIsInactive(order){return order?.status==='pending'&&!!order.autoMatchDisabledAt}
 function deadline(order,field){const value=Date.parse(order?.[field]||'');return Number.isFinite(value)?value:0}
@@ -123,6 +153,7 @@ else if(order.status==='pending'&&orderPaymentExpired(order))status='confirming'
 return pubOrder(order,status)
 }
 function orderOccupiesAmount(order,payee,excludeId=''){
+if(order?.manualOnly)return false;
 if(order.id===excludeId||orderPayee(order)!==payee||!Number.isInteger(order.amountFen))return false;
 return ['pending','paid'].includes(order.status)&&!orderMatchExpired(order)
 }
@@ -159,7 +190,7 @@ const body=await readBody(req);
 if(!validSigned(req,body,shopSecret))return sendJson(res,401,{error:'invalid_signature'});
 let p;try{p=JSON.parse(body.toString('utf8'))}catch{return sendJson(res,400,{error:'invalid_json'})}
 const id=String(p.orderId||'').toUpperCase();
-const af=Number(p.amountFen);
+const af=parseAmountFen(p.amountFen);
 const title=String(p.title||'\u8ba2\u5355').trim().slice(0,160);
 const cbUrl=String(p.callbackUrl||'');
 const retUrl=String(p.returnUrl||'');
@@ -189,21 +220,40 @@ order.amountFen=amountFen;
 }
 if(reactivating){order.baseAmountFen=af;delete order.autoMatchDisabledAt}
 }
-Object.assign(order,{baseAmountFen:order.baseAmountFen||af,callbackStatus:order.callbackStatus||'waiting',callbackUrl:cbUrl,returnUrl:retUrl,source:'dujiaoka',status:'pending',title,payee:'admin',updatedAt:updateTime});
+const requestedMethod=normalizePaymentMethod(p.paymentMethod||p.payment_method||'wechat',p.paymentName||'');
+if(order.manualOnly&&order.paymentMethodOriginal==='alipay'&&requestedMethod!=='alipay')return sendJson(res,409,{error:'payment_method_conflict'});
+Object.assign(order,{baseAmountFen:order.baseAmountFen||af,callbackStatus:order.callbackStatus||'waiting',callbackUrl:cbUrl,manualOnly:requestedMethod==='alipay',paymentMethod:requestedMethod,paymentMethodOriginal:requestedMethod,returnUrl:retUrl,source:'dujiaoka',status:'pending',title,payee:'admin',updatedAt:updateTime});
 persist();
 return sendJson(res,created?201:200,{order:pubOrder(order),paymentUrl:'https://pay.newzoe.cloud/'+id});
 }
 
-async function cbShop(order,tid,{manualOverride=false}={}){
-if(order.source!=='dujiaoka'||!order.callbackUrl||!shopSecret||order.callbackSuppressedAt||order.callbackStatus==='success')return{attempted:false};
+async function cbShop(order,tid,{manualOverride=false,manualFulfilled=false}={}){
+if(order.source!=='dujiaoka'||!order.callbackUrl||!shopSecret||(!manualFulfilled&&order.callbackSuppressedAt)||(!manualFulfilled&&order.callbackStatus==='success'))return{attempted:false};
 const priorStarted=Date.parse(order.callbackStartedAt||0);
 if(order.callbackStatus==='processing'&&Number.isFinite(priorStarted)&&priorStarted>now()-CALLBACK_LEASE)return{attempted:false,inProgress:true};
 order.callbackStatus='processing';order.callbackStartedAt=new Date(now()).toISOString();order.callbackAttempts=Number(order.callbackAttempts||0)+1;order.updatedAt=order.callbackStartedAt;persist();
-const pl=JSON.stringify({amountFen:order.baseAmountFen||order.amountFen,matchedAt:order.settledAt,paidAmountFen:order.amountFen,orderId:order.id,paidAt:order.paidAt,transactionId:tid,...(manualOverride?{manualOverride:true}:{})});
+const pl=JSON.stringify({amountFen:order.baseAmountFen||order.amountFen,matchedAt:order.settledAt,paidAmountFen:order.amountFen,orderId:order.id,paidAt:order.paidAt,transactionId:tid,...(manualOverride?{manualOverride:true}:{}),...(manualFulfilled?{manualFulfilled:true}:{})});
 const ts=String(now());
 try{const r=await fetchImpl(order.callbackUrl,{body:pl,headers:{'content-type':'application/json','x-shop-signature':signPayload(shopSecret,ts,Buffer.from(pl)),'x-shop-timestamp':ts},method:'POST',signal:AbortSignal.timeout(15000)});order.callbackStatus=r.ok?'success':'http_'+r.status}catch(e){order.callbackStatus='error';console.error('cb fail',order.id,e.message)}
 order.updatedAt=new Date(now()).toISOString();persist()
 return{attempted:true,success:order.callbackStatus==='success'}
+}
+async function suppressShop(order,actor){
+if(order.source!=='dujiaoka'||!shopSecret)return{attempted:false,success:false,error:'shop_suppression_unavailable'};
+// This endpoint only records that an admin fulfilled an Alipay order. Never
+// send the marker to the payment gateway callback, which expects a provider
+// transaction payload and would otherwise reject it.
+const callbackUrl=sameOriginUrl(order.manualSuppressUrl||order.suppressUrl,`${cbOrigin}/api/newzoe/manual-suppress`,cbOrigin);
+const pl=JSON.stringify({orderId:order.id,manualFulfilled:true,manualFulfilledAt:order.callbackSuppressedAt||new Date(now()).toISOString(),manualFulfilledBy:String(actor||'pay-admin').slice(0,64)});
+const ts=String(now());
+try{const r=await fetchImpl(callbackUrl,{body:pl,headers:{'content-type':'application/json','x-shop-signature':signPayload(shopSecret,ts,Buffer.from(pl)),'x-shop-timestamp':ts},method:'POST',signal:AbortSignal.timeout(15000)});return{attempted:true,success:r.ok,status:r.status}}catch(e){console.error('suppress fail',order.id,e.message);return{attempted:true,success:false,error:e.message}}
+}
+function recordManualSuppression(order,actor,at){
+order.callbackStatus='manual_fulfilled';
+order.callbackSuppressedAt=at;
+order.callbackSuppressedBy=String(actor||'pay-admin').slice(0,64);
+delete order.callbackSuppressionError;
+order.updatedAt=at;
 }
 
 async function settleOrder(order,paidAt,tid,{triggerShopCallback=true,manualOverride=false}={}){
@@ -220,7 +270,7 @@ return{delivered:d,duplicate:false}
 
 function findPending(amts,payee='admin',sourceTime=NaN){
 return state.orders.filter(o=>{
-if(o.status!=='pending'||o.autoMatchDisabledAt||orderMatchExpired(o)||orderPayee(o)!==payee||!amts.includes(o.amountFen))return false;
+ if(o.status!=='pending'||o.manualOnly||o.autoMatchDisabledAt||orderMatchExpired(o)||orderPayee(o)!==payee||!amts.includes(o.amountFen))return false;
 if(!Number.isFinite(sourceTime))return true;
 const reference=Date.parse(o.createdAt||o.activatedAt||'');return !Number.isFinite(reference)||sourceTime>=reference
 }).sort((a,b)=>Date.parse(a.activatedAt||a.createdAt)-Date.parse(b.activatedAt||b.createdAt))[0]
@@ -240,11 +290,11 @@ const tms=Number(ts)*1000;
 if(!Number.isFinite(tms)||Math.abs(now()-tms)>300000)return sendJson(res,401,{error:'invalid_timestamp'});
 if(!secureEq(sig,signPayload(secret,ts,body)))return sendJson(res,401,{error:'invalid_signature'});
 let p;try{p=JSON.parse(body.toString('utf8'))}catch{return sendJson(res,400,{error:'invalid_json'})}
-const af=Number(p.amountFen);const tid=String(p.transactionId||'');
+const af=parseAmountFen(p.amountFen);const tid=String(p.transactionId||'');
 const cid=p.clientId?String(p.clientId):'';
 const oid=p.orderId?String(p.orderId).toUpperCase():'';
 const isTest=p.mode==='test';
-if(!Number.isInteger(af)||!/^[A-Za-z0-9_.:-]{8,128}$/.test(tid))return sendJson(res,400,{error:'invalid_payment'});
+if(!Number.isSafeInteger(af)||af<1||af>MAX_AMOUNT_FEN||!/^[A-Za-z0-9_.:-]{8,128}$/.test(tid))return sendJson(res,400,{error:'invalid_payment'});
 if(cid&&!/^[A-Za-z0-9_-]{16,80}$/.test(cid))return sendJson(res,400,{error:'invalid_client'});
 if(isTest&&!cid)return sendJson(res,400,{error:'test_requires_client'});
 const order=oid?orderById(oid):null;
@@ -253,7 +303,12 @@ if(priorTxn){
 if(order&&priorTxn.orderId===order.id&&priorTxn.amountFen===af)return sendJson(res,200,{accepted:true,delivered:0,duplicate:true,matched:true});
 return sendJson(res,409,{accepted:false,error:'transaction_conflict',matched:false})
 }
-if(order){if(order.status!=='paid'&&orderMatchExpired(order))return sendJson(res,410,{error:'order_expired'});if(order.amountFen!==af)return sendJson(res,202,{accepted:true,matched:false});const r=await settleOrder(order,p.paidAt||new Date(now()).toISOString(),tid);return sendJson(res,200,{accepted:true,delivered:r.delivered,duplicate:r.duplicate,matched:true})}
+if(order){
+if(order.manualOnly)return sendJson(res,202,{accepted:true,matched:false,reason:'manual_order_required'});
+if(order.status!=='paid'&&orderMatchExpired(order))return sendJson(res,410,{error:'order_expired'});
+if(order.amountFen!==af)return sendJson(res,202,{accepted:true,matched:false});
+const r=await settleOrder(order,p.paidAt||new Date(now()).toISOString(),tid);return sendJson(res,200,{accepted:true,delivered:r.delivered,duplicate:r.duplicate,matched:true})
+}
 if(!isTest)return sendJson(res,202,{accepted:true,matched:false,reason:'order_required'});
 const pmt={amountFen:af,paidAt:p.paidAt||new Date(now()).toISOString(),status:'paid',test:isTest};
 return sendJson(res,200,{accepted:true,delivered:broadcast(pmt,cid),matched:true,test:isTest})
@@ -341,9 +396,51 @@ const payee=orderPayee(order);const user=userByName(state,payee);
 return sendJson(res,200,{...publicOrder(order),payee,payeeDisplayName:user?.displayName||payee,qrcodeReady:order.status==='pending'&&!orderPaymentExpired(order)&&!!payeeQrPath(payee),serverTime:new Date(now()).toISOString()})
 }
 
+function materializeAlipayOrder(so,save=true){
+const id=String(so?.id||'').toUpperCase();
+if(!/^[A-Z0-9_-]{8,64}$/.test(id))return null;
+const paymentMethod=normalizePaymentMethod(so.paymentMethod,so.paymentName);
+if(paymentMethod!=='alipay')return null;
+const existing=orderById(id);
+if(existing){
+if(existing.paymentMethodOriginal==='alipay'||existing.paymentMethod==='alipay'||existing.manualOnly)return existing;
+if(existing.status==='paid'||(existing.paymentMethod&&existing.paymentMethod!=='wechat'))return null;
+return null;
+}
+const createdRaw=String(so.createdAt||'').trim();
+const createdMs=createdRaw?Date.parse(createdRaw):now();
+if(!Number.isFinite(createdMs))return null;
+const expiresRaw=String(so.expiresAt||'').trim();
+const expiresMs=expiresRaw?Date.parse(expiresRaw):createdMs+paymentWindow;
+if(!Number.isFinite(expiresMs)||expiresMs<createdMs)return null;
+const matchRaw=String(so.matchExpiresAt||'').trim();
+const matchMs=matchRaw?Date.parse(matchRaw):expiresMs+settlementGrace;
+if(!Number.isFinite(matchMs)||matchMs<expiresMs)return null;
+const createdAt=new Date(createdMs).toISOString();
+const expiresAt=new Date(expiresMs).toISOString();
+const matchExpiresAt=new Date(matchMs).toISOString();
+const callbackUrl=sameOriginUrl(so.callbackUrl,`${cbOrigin}/pay/newzoe/notify_url`,cbOrigin);
+const returnUrl=sameOriginUrl(so.returnUrl,`${cbOrigin}/detail-order-sn/${id}`,cbOrigin);
+const amountFen=parseAmountFen(so.amountFen);
+if(!Number.isSafeInteger(amountFen)||amountFen<1||amountFen>MAX_AMOUNT_FEN)return null;
+const manualSuppressUrl=sameOriginUrl(so.manualSuppressUrl||so.suppressUrl,`${cbOrigin}/api/newzoe/manual-suppress`,cbOrigin);
+const order={activatedAt:createdAt,amountFen,baseAmountFen:amountFen,callbackStatus:'waiting',callbackUrl,createdAt,expiresAt,externalStatus:shopStatusKey(so.status),id,manualOnly:true,manualSuppressUrl,matchExpiresAt,paymentMethod:'alipay',paymentMethodOriginal:'alipay',returnUrl,source:'dujiaoka',status:'pending',title:String(so.title||'支付宝订单').slice(0,160),payee:'admin',updatedAt:createdAt};
+state.orders.push(order);if(save)persist();return order;
+}
 async function fetchShopOrders(){
 if(!shopOrdUrl||!shopSecret||!fetchImpl)return[];
-try{const r=await fetchImpl(shopOrdUrl,{headers:{'x-newzoe-key':shopSecret}});if(!r.ok)return[];const p=await r.json();return Array.isArray(p.orders)?p.orders:[]}catch(e){console.error('sync fail:',e.message);return[]}
+try{const r=await fetchImpl(shopOrdUrl,{headers:{'x-newzoe-key':shopSecret}});if(!r.ok)return[];const p=await r.json();const list=(Array.isArray(p.orders)?p.orders:[]).map(so=>({...so,id:String(so?.id||'').toUpperCase()}));const beforeCount=state.orders.length;let changed=false;for(const so of list){const materialized=materializeAlipayOrder(so,false);if(materialized&&materialized.externalStatus!==shopStatusKey(so.status)){materialized.externalStatus=shopStatusKey(so.status);materialized.updatedAt=new Date(now()).toISOString();changed=true}}if(changed||state.orders.length!==beforeCount)persist();return list}catch(e){console.error('sync fail:',e.message);return[]}
+}
+async function refreshExternalOrder(order){
+if(!order?.manualOnly||order.paymentMethodOriginal!=='alipay')return{ok:true,order:null};
+const list=await fetchShopOrders();
+const remote=list.find(item=>String(item?.id||'').toUpperCase()===String(order.id).toUpperCase());
+if(!remote)return{ok:false,error:'external_order_not_found'};
+const method=normalizePaymentMethod(remote.paymentMethod,remote.paymentName);
+if(method!=='alipay')return{ok:false,error:'payment_method_conflict'};
+const status=shopStatusKey(remote.status);order.externalStatus=status;
+if(!['pending','expired'].includes(status))return{ok:false,error:'external_order_status',status};
+return{ok:true,order:remote,status};
 }
 
 async function handleAdminApi(req,res,url){
@@ -436,8 +533,17 @@ return sendJson(res,200,{qrcode:fn,url:'/qrcodes/'+fn})
 // orders
 if(url.pathname==='/api/admin/orders'&&req.method==='GET'){
 const shop=await fetchShopOrders();
-const localById=new Map(state.orders.map(o=>[o.id,o]));
-const merged=shop.map(so=>{const po=localById.get(so.id);localById.delete(so.id);const payment=po?publicOrder(po):null;const status=['confirming','expired','inactive'].includes(payment?.status)?payment.status:so.status;return{...so,amountFen:payment?.amountFen||so.amountFen,baseAmountFen:payment?.baseAmountFen||so.amountFen,payee:'admin',status,payment}});
+const localById=new Map(state.orders.map(o=>[String(o.id||'').toUpperCase(),o]));
+const merged=shop.map(so=>{
+const normalizedId=String(so?.id||'').toUpperCase();
+const po=localById.get(normalizedId);localById.delete(normalizedId);
+const payment=po?publicOrder(po):null;
+const externalStatus=shopStatusKey(so.status);
+const status=payment?.manualOnly&&payment.status==='paid'&&['pending','expired'].includes(externalStatus)
+  ?'paid'
+  :externalStatus;
+return{...so,id:normalizedId,amountFen:payment?.amountFen||so.amountFen,baseAmountFen:payment?.baseAmountFen||so.amountFen,paymentMethod:payment?.paymentMethod||normalizePaymentMethod(so.paymentMethod,so.paymentName),payee:'admin',status,payment}
+});
 for(const o of localById.values()){const payment=publicOrder(o);merged.push({amountFen:o.amountFen,baseAmountFen:o.baseAmountFen||o.amountFen,createdAt:o.createdAt,expiresAt:o.expiresAt,id:o.id,source:o.source,status:payment.status,title:o.title,payee:orderPayee(o),payment})}
 merged.sort((a,b)=>Date.parse(b.createdAt||0)-Date.parse(a.createdAt||0));
 const filtered=isSuper?merged:merged.filter(o=>(o.payment?.payee||o.payee||'admin')===curObj.username);
@@ -470,7 +576,19 @@ if(!isSuper&&orderPayee(order)!==curObj.username)return sendJson(res,403,{error:
 if(!String(req.headers['content-type']||'').toLowerCase().includes('application/json'))return sendJson(res,415,{error:'invalid_content_type'});
 const body=await readBody(req);let p;try{p=JSON.parse(body.toString('utf8'))}catch{return sendJson(res,400,{error:'invalid_json'})}
 if(order.source==='dujiaoka'&&typeof p.triggerShopFulfillment!=='boolean')return sendJson(res,400,{error:'invalid_fulfillment_choice'});
+if(order.manualOnly&&order.paymentMethodOriginal==='alipay'&&order.status!=='paid'){
+const external=await refreshExternalOrder(order);
+if(!external.ok)return sendJson(res,409,{error:external.error,status:external.status||''});
+}
 if(order.status==='paid'){
+const isAlipay=order.source==='dujiaoka'&&order.paymentMethodOriginal==='alipay';
+if(isAlipay&&p.triggerShopFulfillment===false&&!order.callbackSuppressedAt){
+ const suppression=await suppressShop(order,curObj.username);
+ if(suppression.success)recordManualSuppression(order,curObj.username,new Date(now()).toISOString());
+ else{order.callbackStatus='error';order.callbackSuppressionError=suppression.error||`http_${suppression.status||'error'}`;order.updatedAt=new Date(now()).toISOString()}
+ persist();
+ return sendJson(res,200,{duplicate:true,order:pubOrder(order),shopFulfillmentSuppressed:suppression.success,shopFulfillmentSuppressionAttempted:suppression.attempted,shopFulfillmentSuppressionError:suppression.success?'':(suppression.error||`http_${suppression.status||'error'}`),shopFulfillmentRetried:false,shopFulfillmentTriggered:false})
+}
 const shouldRetry=order.source==='dujiaoka'&&p.triggerShopFulfillment===true&&!order.callbackSuppressedAt&&order.callbackStatus!=='success';
 const retryResult=shouldRetry?await cbShop(order,order.transactionId||('manual-retry-'+order.id),{manualOverride:true}):{attempted:false};
 return sendJson(res,200,{duplicate:true,order:pubOrder(order),shopFulfillmentRetried:retryResult.attempted,shopFulfillmentTriggered:retryResult.attempted})
@@ -478,11 +596,18 @@ return sendJson(res,200,{duplicate:true,order:pubOrder(order),shopFulfillmentRet
 if(order.status!=='pending')return sendJson(res,409,{error:'invalid_order_status'});
 const paidAt=new Date(now()).toISOString();
 const triggerShopCallback=order.source==='dujiaoka'&&p.triggerShopFulfillment===true;
-order.manualPaidAt=paidAt;order.manualPaidBy=curObj.username;order.paymentMethod='manual_admin';
-if(order.source==='dujiaoka'&&!triggerShopCallback){order.callbackStatus='manual_fulfilled';order.callbackSuppressedAt=paidAt;order.callbackSuppressedBy=curObj.username}
+order.manualPaidAt=paidAt;order.manualPaidBy=curObj.username;order.paymentMethodOriginal=order.paymentMethodOriginal||order.paymentMethod||'';order.paymentMethod='manual_admin';
 const tid='manual-'+String(now())+'-'+crypto.randomBytes(6).toString('hex');
 const result=await settleOrder(order,paidAt,tid,{triggerShopCallback,manualOverride:triggerShopCallback});
-return sendJson(res,200,{duplicate:result.duplicate,order:pubOrder(order),shopFulfillmentTriggered:triggerShopCallback})
+const suppression=order.source==='dujiaoka'&&!triggerShopCallback&&order.paymentMethodOriginal==='alipay'?await suppressShop(order,curObj.username):{attempted:false,success:true};
+if(order.source==='dujiaoka'&&!triggerShopCallback){
+ if(order.paymentMethodOriginal==='alipay'){
+  if(suppression.success)recordManualSuppression(order,curObj.username,paidAt);
+  else{order.callbackStatus='error';order.callbackSuppressionError=suppression.error||`http_${suppression.status||'error'}`;order.updatedAt=new Date(now()).toISOString()}
+ }else recordManualSuppression(order,curObj.username,paidAt);
+ persist();
+}
+return sendJson(res,200,{duplicate:result.duplicate,order:pubOrder(order),shopFulfillmentSuppressed:suppression.success,shopFulfillmentSuppressionAttempted:suppression.attempted,shopFulfillmentSuppressionError:suppression.success?'':(suppression.error||`http_${suppression.status||'error'}`),shopFulfillmentTriggered:triggerShopCallback})
 }
 
 // smsf config

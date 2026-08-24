@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 
 Route::get('newzoe/orders', 'NewzoeApiController@orders');
+Route::post('newzoe/manual-suppress', 'NewzoeApiController@manualSuppress');
 Route::get('telegram/webhook/health', 'TelegramWebhookController@health');
 Route::post('telegram/webhook', 'TelegramWebhookController@webhook')->middleware('throttle:120,1');
 

@@ -1317,6 +1317,350 @@ test('admin manual payment can trigger shop fulfillment or permanently suppress 
   });
 });
 
+test('Alipay shop orders are materialized for manual settlement in the pay admin', async () => {
+  const callbacks = [];
+  const shopOrder = {
+    amountFen: 901,
+    callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+    createdAt: new Date(NOW).toISOString(),
+    expiresAt: new Date(NOW + 20 * 60 * 1000).toISOString(),
+    id: 'ALIPAYMANUAL01',
+    manualSuppressUrl: 'https://shop.newzoe.cloud/api/newzoe/manual-suppress',
+    matchExpiresAt: new Date(NOW + 25 * 60 * 1000).toISOString(),
+    paymentMethod: 'aliweb',
+    paymentName: '支付宝',
+    returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/ALIPAYMANUAL01',
+    source: 'dujiaoka',
+    status: 1,
+    title: '支付宝订单'
+  };
+  await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+
+    const listedResponse = await fetch(`${baseUrl}/api/admin/orders`, { headers: { cookie } });
+    assert.equal(listedResponse.status, 200);
+    const listed = (await listedResponse.json()).orders.find((order) => order.id === shopOrder.id);
+    assert.equal(listed.payment.paymentMethod, 'alipay');
+    assert.equal(listed.payment.manualOnly, true);
+    assert.equal(listed.status, 'pending');
+
+    const notifyBody = JSON.stringify({ amountFen: 901, orderId: shopOrder.id, transactionId: 'provider-alipay-01' });
+    const notifyResponse = await fetch(`${baseUrl}/api/payment/notify`, {
+      body: notifyBody,
+      headers: signedHeaders(notifyBody),
+      method: 'POST'
+    });
+    assert.equal(notifyResponse.status, 202);
+    assert.deepEqual(await notifyResponse.json(), { accepted: true, matched: false, reason: 'manual_order_required' });
+
+    const manualResponse = await fetch(`${baseUrl}/api/admin/orders/${shopOrder.id}/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: false }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    assert.equal(manualResponse.status, 200);
+    const manual = await manualResponse.json();
+    assert.equal(manual.order.status, 'paid');
+    assert.equal(manual.order.paymentMethod, 'manual_admin');
+    assert.equal(manual.order.paymentMethodOriginal, 'alipay');
+    assert.equal(manual.order.callbackStatus, 'manual_fulfilled');
+    assert.equal(manual.shopFulfillmentTriggered, false);
+    assert.equal(callbacks.length, 1);
+    const suppression = JSON.parse(callbacks[0].request.body);
+    assert.equal(callbacks[0].url, 'https://shop.newzoe.cloud/api/newzoe/manual-suppress');
+    assert.equal(suppression.orderId, shopOrder.id);
+    assert.equal(suppression.manualFulfilled, true);
+  }, {
+    adminPassword: 'test-admin-password',
+    fetchImpl: async (url, request) => {
+      if (String(url) === 'https://shop.test/api/newzoe/orders') return { ok: true, status: 200, json: async () => ({ orders: [shopOrder] }) };
+      callbacks.push({ url, request });
+      return { ok: true, status: 200 };
+    },
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters',
+    shopOrdersUrl: 'https://shop.test/api/newzoe/orders'
+  });
+});
+
+test('an Alipay manual confirmation can run the normal shop fulfillment callback', async () => {
+  const callbacks = [];
+  const shopOrder = {
+    amountFen: 1300,
+    callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+    createdAt: new Date(NOW).toISOString(),
+    id: 'ALIPAYFULFILL01',
+    paymentMethod: 'alipayscan',
+    paymentName: '支付宝当面付',
+    returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/ALIPAYFULFILL01',
+    source: 'dujiaoka',
+    status: 1,
+    title: '支付宝自动发货订单'
+  };
+  await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+    await fetch(`${baseUrl}/api/admin/orders`, { headers: { cookie } });
+
+    const response = await fetch(`${baseUrl}/api/admin/orders/${shopOrder.id}/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: true }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.order.status, 'paid');
+    assert.equal(result.order.callbackStatus, 'success');
+    assert.equal(result.order.paymentMethodOriginal, 'alipay');
+    assert.equal(result.shopFulfillmentTriggered, true);
+    assert.equal(callbacks.length, 1);
+    const callback = JSON.parse(callbacks[0].request.body);
+    assert.equal(callback.orderId, shopOrder.id);
+    assert.equal(callback.amountFen, 1300);
+    assert.equal(callback.manualOverride, true);
+  }, {
+    adminPassword: 'test-admin-password',
+    fetchImpl: async (url, request) => {
+      if (String(url) === 'https://shop.test/api/newzoe/orders') return { ok: true, status: 200, json: async () => ({ orders: [shopOrder] }) };
+      callbacks.push({ url, request });
+      return { ok: true, status: 200 };
+    },
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters',
+    shopOrdersUrl: 'https://shop.test/api/newzoe/orders'
+  });
+});
+
+test('Alipay admin listing keeps remote status and canonicalizes external ids', async () => {
+  const shopOrders = [
+    {
+      amountFen: 1501,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      createdAt: new Date(NOW).toISOString(),
+      id: 'alipayremote01',
+      paymentMethod: 'aliweb',
+      paymentName: '支付宝',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/alipayremote01',
+      source: 'dujiaoka',
+      status: 2,
+      title: '远端已支付'
+    },
+    {
+      amountFen: 1502,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      createdAt: new Date(NOW).toISOString(),
+      id: 'ALIPAYREMOTE02',
+      paymentMethod: 'alipayscan',
+      paymentName: '支付宝当面付',
+      returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/ALIPAYREMOTE02',
+      source: 'dujiaoka',
+      status: 4,
+      title: '远端已完成'
+    }
+  ];
+  await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+    const response = await fetch(`${baseUrl}/api/admin/orders`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const listed = (await response.json()).orders;
+    const paid = listed.find((order) => order.id === 'ALIPAYREMOTE01');
+    const completed = listed.find((order) => order.id === 'ALIPAYREMOTE02');
+    assert.equal(paid.status, 'paid');
+    assert.equal(paid.payment.externalStatus, 'paid');
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.payment.externalStatus, 'completed');
+  }, {
+    adminPassword: 'test-admin-password',
+    fetchImpl: async (url) => {
+      if (String(url) === 'https://shop.test/api/newzoe/orders') return { ok: true, status: 200, json: async () => ({ orders: shopOrders }) };
+      return { ok: true, status: 200 };
+    },
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters',
+    shopOrdersUrl: 'https://shop.test/api/newzoe/orders'
+  });
+});
+
+test('malformed external Alipay amounts are not materialized for manual settlement', async () => {
+  const shopOrders = [
+    {
+      amountFen: 901,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      id: 'ALIPAYVALID01',
+      paymentMethod: 'aliweb',
+      paymentName: '支付宝',
+      source: 'dujiaoka',
+      status: 1,
+      title: '有效金额'
+    },
+    {
+      amountFen: '1e3',
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      id: 'ALIPAYBAD001',
+      paymentMethod: 'aliweb',
+      paymentName: '支付宝',
+      source: 'dujiaoka',
+      status: 1,
+      title: '科学计数法'
+    },
+    {
+      amountFen: Number.MAX_SAFE_INTEGER + 1,
+      callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+      id: 'ALIPAYBAD002',
+      paymentMethod: 'aliweb',
+      paymentName: '支付宝',
+      source: 'dujiaoka',
+      status: 1,
+      title: '不安全整数'
+    }
+  ];
+  await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+    const response = await fetch(`${baseUrl}/api/admin/orders`, { headers: { cookie } });
+    const listed = (await response.json()).orders;
+    assert.equal(listed.find((order) => order.id === 'ALIPAYVALID01').payment.manualOnly, true);
+    assert.equal(listed.find((order) => order.id === 'ALIPAYBAD001').payment, null);
+    assert.equal(listed.find((order) => order.id === 'ALIPAYBAD002').payment, null);
+  }, {
+    adminPassword: 'test-admin-password',
+    fetchImpl: async (url) => {
+      if (String(url) === 'https://shop.test/api/newzoe/orders') return { ok: true, status: 200, json: async () => ({ orders: shopOrders }) };
+      return { ok: true, status: 200 };
+    },
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters',
+    shopOrdersUrl: 'https://shop.test/api/newzoe/orders'
+  });
+});
+
+test('a failed Alipay manual-suppression request remains retryable', async () => {
+  const callbacks = [];
+  const shopOrder = {
+    amountFen: 1200,
+    callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+    createdAt: new Date(NOW).toISOString(),
+    expiresAt: new Date(NOW + 20 * 60 * 1000).toISOString(),
+    id: 'ALIPAYSUPPRESS01',
+    manualSuppressUrl: 'https://shop.newzoe.cloud/api/newzoe/manual-suppress',
+    matchExpiresAt: new Date(NOW + 25 * 60 * 1000).toISOString(),
+    paymentMethod: 'aliweb',
+    paymentName: '支付宝',
+    source: 'dujiaoka',
+    status: 1,
+    title: '抑制重试'
+  };
+  let suppressionAttempts = 0;
+  await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+    const first = await fetch(`${baseUrl}/api/admin/orders`, { headers: { cookie } });
+    assert.equal(first.status, 200);
+
+    const failed = await fetch(`${baseUrl}/api/admin/orders/${shopOrder.id}/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: false }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    const failedBody = await failed.json();
+    assert.equal(failed.status, 200);
+    assert.equal(failedBody.shopFulfillmentSuppressed, false);
+    assert.equal(failedBody.order.callbackStatus, 'error');
+    assert.equal(failedBody.order.callbackSuppressedAt, null);
+
+    const retried = await fetch(`${baseUrl}/api/admin/orders/${shopOrder.id}/mark-paid`, {
+      body: JSON.stringify({ triggerShopFulfillment: false }),
+      headers: { 'content-type': 'application/json', cookie },
+      method: 'POST'
+    });
+    const retriedBody = await retried.json();
+    assert.equal(retried.status, 200);
+    assert.equal(retriedBody.duplicate, true);
+    assert.equal(retriedBody.shopFulfillmentSuppressed, true);
+    assert.equal(retriedBody.order.callbackStatus, 'manual_fulfilled');
+    assert.ok(retriedBody.order.callbackSuppressedAt);
+  }, {
+    adminPassword: 'test-admin-password',
+    fetchImpl: async (url, request) => {
+      if (String(url) === 'https://shop.test/api/newzoe/orders') return { ok: true, status: 200, json: async () => ({ orders: [shopOrder] }) };
+      callbacks.push({ url, request });
+      suppressionAttempts += 1;
+      return suppressionAttempts === 1 ? { ok: false, status: 503 } : { ok: true, status: 200 };
+    },
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters',
+    shopOrdersUrl: 'https://shop.test/api/newzoe/orders'
+  });
+  assert.equal(callbacks.length, 2);
+  assert.equal(callbacks[0].url, 'https://shop.newzoe.cloud/api/newzoe/manual-suppress');
+  assert.equal(callbacks[1].url, 'https://shop.newzoe.cloud/api/newzoe/manual-suppress');
+});
+
+test('external Alipay orders with invalid expiry windows are not materialized', async () => {
+  const shopOrders = [
+    {
+      amountFen: 801,
+      createdAt: new Date(NOW).toISOString(),
+      expiresAt: 'not-a-date',
+      id: 'ALIPAYDATEBAD1',
+      paymentMethod: 'aliweb',
+      paymentName: '支付宝',
+      source: 'dujiaoka',
+      status: 1,
+      title: '无效过期时间'
+    },
+    {
+      amountFen: 802,
+      createdAt: new Date(NOW).toISOString(),
+      expiresAt: new Date(NOW + 20 * 60 * 1000).toISOString(),
+      id: 'ALIPAYDATEBAD2',
+      matchExpiresAt: new Date(NOW + 10 * 60 * 1000).toISOString(),
+      paymentMethod: 'aliweb',
+      paymentName: '支付宝',
+      source: 'dujiaoka',
+      status: 1,
+      title: '匹配窗口过短'
+    }
+  ];
+  await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+    const response = await fetch(`${baseUrl}/api/admin/orders`, { headers: { cookie } });
+    const listed = (await response.json()).orders;
+    assert.equal(listed.find((order) => order.id === 'ALIPAYDATEBAD1').payment, null);
+    assert.equal(listed.find((order) => order.id === 'ALIPAYDATEBAD2').payment, null);
+  }, {
+    adminPassword: 'test-admin-password',
+    fetchImpl: async (url) => {
+      if (String(url) === 'https://shop.test/api/newzoe/orders') return { ok: true, status: 200, json: async () => ({ orders: shopOrders }) };
+      return { ok: true, status: 200 };
+    },
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters',
+    shopOrdersUrl: 'https://shop.test/api/newzoe/orders'
+  });
+});
+
 test('failed shop fulfillment can be retried without settling the order twice', async () => {
   const callbacks = [];
   await withServer(async (baseUrl) => {

@@ -35,18 +35,35 @@ function roleLabel(r) { return r === "super" ? "超级管理员" : "管理员"; 
 function esc(v) { return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
 
 function normStatus(o) {
+  const external = String(o.payment?.externalStatus || "").toLowerCase();
+  const externalKnown = ["completed", "paid", "pending", "confirming", "expired", "inactive", "failed", "abnormal"].includes(external);
+  if (o.payment?.manualOnly && externalKnown) {
+    // A locally settled manual order may still be pending in the shop because
+    // its normal callback was intentionally skipped. Preserve that local
+    // settlement while letting every meaningful remote status win otherwise.
+    if (o.payment.status === "paid" && ["pending", "expired"].includes(external)) return "paid";
+    return external;
+  }
   const s = o.payment?.status || o.status;
-  if (["completed", "paid", "pending", "confirming", "expired", "inactive"].includes(s)) return s;
+  if (["completed", "paid", "pending", "confirming", "expired", "inactive", "failed", "abnormal"].includes(s)) return s;
   const c = Number(s);
-  return ({ "-1": "expired", 1: "pending", 2: "paid", 3: "paid", 4: "completed" })[c] || "pending";
+  return ({ "-1": "expired", 1: "pending", 2: "paid", 3: "paid", 4: "completed", 5: "failed", 6: "abnormal" })[c] || "unknown";
 }
-const statusMap = { pending: "待支付", confirming: "到账确认中", paid: "已支付", completed: "已完成", expired: "已过期", inactive: "需重新登记" };
+const statusMap = { pending: "待支付", confirming: "到账确认中", paid: "已支付", completed: "已完成", expired: "已过期", inactive: "需重新登记", failed: "发货失败", abnormal: "异常订单", unknown: "未知状态" };
 const smsfResultMap = { matched: "已匹配", duplicate: "重复通知", no_pending_order: "没有同金额待支付订单", amount_not_found: "未识别到金额", ignored: "已忽略" };
 const callbackStatusMap = { success: "卡网已发货", waiting: "等待卡网回调", processing: "卡网回调处理中", manual_fulfilled: "人工已发货", error: "卡网回调失败" };
 function callbackStatusLabel(status) { return status.startsWith("http_") ? "卡网回调失败" : (callbackStatusMap[status] || status); }
+function paymentMethodKey(o) { return String(o.payment?.paymentMethodOriginal || o.payment?.paymentMethod || o.paymentMethodOriginal || o.paymentMethod || "").trim().toLowerCase(); }
+function paymentMethodLabel(o) {
+  const key = paymentMethodKey(o);
+  if (key === "alipay" || key.includes("ali") || key.includes("zfb")) return "支付宝";
+  if (key === "binancepay" || key.includes("binance")) return "币安";
+  if (key === "newzoe-wechat" || key.includes("wechat")) return "微信";
+  return key || "-";
+}
 function adminErrorMessage(error) {
   const code = error.data?.error;
-  return ({ forbidden: "没有权限操作该订单", invalid_origin: "页面来源校验失败，请刷新后重试", invalid_content_type: "请求格式不正确，请刷新后重试", order_not_found: "订单不存在或已被移除", invalid_fulfillment_choice: "请选择卡网发货处理方式", invalid_order_status: "该订单当前状态不支持此操作" })[code] || error.message;
+  return ({ forbidden: "没有权限操作该订单", invalid_origin: "页面来源校验失败，请刷新后重试", invalid_content_type: "请求格式不正确，请刷新后重试", order_not_found: "订单不存在或已被移除", invalid_fulfillment_choice: "请选择卡网发货处理方式", invalid_order_status: "该订单当前状态不支持此操作", external_order_not_found: "商城订单不存在或已被删除", external_order_status: "商城订单已经有支付结果，不能重复人工确认", payment_method_conflict: "该订单不是支付宝订单", shop_suppression_unavailable: "商城人工发货接口未配置" })[code] || error.message;
 }
 
 // ==================== API ====================
@@ -123,23 +140,26 @@ function renderOrders() {
     const row = document.createElement("tr");
     const s = normStatus(o);
     const payment = o.payment || null;
-    const link = payment ? "https://pay.newzoe.cloud/" + encodeURIComponent(o.id) : "";
+    const link = payment ? (o.paymentUrl || (paymentMethodKey(o) === "alipay" ? "" : "https://pay.newzoe.cloud/" + encodeURIComponent(o.id))) : "";
     const amountFen = payment?.amountFen ?? o.amountFen;
     const baseAmountFen = payment?.baseAmountFen ?? o.baseAmountFen ?? amountFen;
     const amountNote = baseAmountFen !== amountFen ? `<small>商品原价 ${money(baseAmountFen)}</small>` : "";
     const callbackStatus = payment?.callbackStatus || "";
     const callbackNote = callbackStatus ? `<small>${esc(callbackStatusLabel(callbackStatus))}</small>` : "";
-    const canMarkPaid = payment && ["pending", "confirming", "expired"].includes(s);
+    const externalCanSettle = !payment?.manualOnly || ["pending", "expired"].includes(payment?.externalStatus || "pending");
+    const canMarkPaid = payment && ["pending", "confirming", "expired"].includes(s) && externalCanSettle;
     const isShopOrder = (payment?.source || o.source) === "dujiaoka";
+    const isAlipay = paymentMethodKey(o) === "alipay";
     const callbackLeaseExpired = callbackStatus === "processing" && Date.parse(payment?.callbackStartedAt || 0) < Date.now() - 2 * 60 * 1000;
     const canRetryFulfillment = payment && s === "paid" && isShopOrder && !payment.callbackSuppressedAt && callbackStatus !== "success" && (callbackStatus !== "processing" || callbackLeaseExpired);
+    const retryMode = isAlipay && payment?.callbackSuppressionError ? "suppress" : "callback";
     const retrying = retryingOrders.has(o.id);
-    const actions = `${link ? `<a class="table-link" href="${link}" target="_blank" rel="noopener">收银台</a>` : ""}${canMarkPaid ? `<button class="mark-paid-button" data-order="${esc(o.id)}" type="button">标记已支付</button>` : ""}${canRetryFulfillment ? `<button class="retry-fulfillment-button" data-order="${esc(o.id)}" type="button"${retrying ? " disabled" : ""}>${retrying ? "处理中..." : "重试发货"}</button>` : ""}`;
-    row.innerHTML = `<td><strong>${esc(o.id)}</strong><div class="mobile-order-actions">${actions}</div></td><td>${esc(o.title || "未命名")}</td><td>${money(amountFen)}${amountNote}</td><td>${esc(o.payee || payment?.payee || "-")}</td><td>${o.source === "manual" ? "手工" : "卡网"}</td><td><span class="status status-${esc(s)}">${esc(statusMap[s] || s)}</span>${callbackNote}</td><td>${dt(o.createdAt)}</td><td><div class="table-actions">${actions}</div></td>`;
+    const actions = `${link ? `<a class="table-link" href="${link}" target="_blank" rel="noopener">收银台</a>` : ""}${canMarkPaid ? `<button class="mark-paid-button" data-order="${esc(o.id)}" type="button">${isAlipay ? "标记已发货" : "标记已支付"}</button>` : ""}${canRetryFulfillment ? `<button class="retry-fulfillment-button" data-order="${esc(o.id)}" data-mode="${retryMode}" type="button"${retrying ? " disabled" : ""}>${retrying ? "处理中..." : (retryMode === "suppress" ? "重试人工记录" : "重试发货")}</button>` : ""}`;
+    row.innerHTML = `<td><strong>${esc(o.id)}</strong><div class="mobile-order-actions">${actions}</div></td><td>${esc(o.title || "未命名")}</td><td>${money(amountFen)}${amountNote}</td><td>${esc(o.payee || payment?.payee || "-")}</td><td>${o.source === "manual" ? "手工" : (o.source === "dujiaoka" ? `卡网 · ${esc(paymentMethodLabel(o))}` : "卡网")}</td><td><span class="status status-${esc(s)}">${esc(statusMap[s] || s)}</span>${callbackNote}</td><td>${dt(o.createdAt)}</td><td><div class="table-actions">${actions}</div></td>`;
     return row;
   }));
   $$(".mark-paid-button").forEach((button) => button.addEventListener("click", () => openMarkPaid(button.dataset.order)));
-  $$(".retry-fulfillment-button").forEach((button) => button.addEventListener("click", () => retryFulfillment(button.dataset.order)));
+  $$(".retry-fulfillment-button").forEach((button) => button.addEventListener("click", () => retryFulfillment(button.dataset.order, button.dataset.mode)));
   empty.hidden = filtered.length > 0;
   $("#metric-all").textContent = orders.length;
   $("#metric-pending").textContent = orders.filter((o) => ["pending", "confirming"].includes(normStatus(o))).length;
@@ -153,8 +173,13 @@ function openMarkPaid(orderId) {
   if (!markPaidOrder) return;
   const payment = markPaidOrder.payment;
   const isShopOrder = (payment?.source || markPaidOrder.source) === "dujiaoka";
+  const isAlipay = paymentMethodKey(markPaidOrder) === "alipay";
   $("#mark-paid-order-id").textContent = markPaidOrder.id;
   $("#mark-paid-amount").textContent = money(payment?.amountFen ?? markPaidOrder.amountFen);
+  $("#mark-paid-title").textContent = isAlipay ? "标记支付宝订单已发货" : "标记订单已支付";
+  $("#trigger-shop-fulfillment-label").textContent = isAlipay ? "继续触发商城自动发货" : "继续触发卡网自动发货";
+  $("#trigger-shop-fulfillment-help").textContent = isAlipay ? "取消勾选表示已经人工发货，系统将跳过商城回调。" : "取消勾选表示已经人工发货，系统将永久跳过此订单的卡网回调。";
+  $("#confirm-mark-paid").textContent = isAlipay ? "确认已发货" : "确认已收款";
   $("#shop-fulfillment-choice").hidden = !isShopOrder;
   $("#manual-order-note").hidden = isShopOrder;
   $("#trigger-shop-fulfillment").checked = true;
@@ -201,29 +226,35 @@ $("#confirm-mark-paid").addEventListener("click", async () => {
     if (isShopOrder && result.shopFulfillmentTriggered && callbackStatus !== "success") {
       alert("订单已标记支付，但卡网回调未成功，请查看订单状态。");
     }
+    if (isShopOrder && !result.shopFulfillmentTriggered && paymentMethodKey(targetOrder) === "alipay" && result.shopFulfillmentSuppressed === false) {
+      alert("订单已标记为人工发货，但商城抑制回调失败，请检查商城接口后重试。");
+    }
   } catch (ex) {
     if (ex.status === 401) { closeMarkPaid(true); return; }
     if (markPaidOrder === targetOrder) error.textContent = adminErrorMessage(ex);
   } finally {
     setMarkPaidBusy(false);
-    button.textContent = "确认已收款";
+    if (markPaidDialog.open && markPaidOrder === targetOrder) button.textContent = paymentMethodKey(targetOrder) === "alipay" ? "确认已发货" : "确认已收款";
+    else button.textContent = "确认已收款";
   }
 });
 
-async function retryFulfillment(orderId) {
+async function retryFulfillment(orderId, mode = "callback") {
   if (retryingOrders.has(orderId)) return;
-  const confirmed = await showConfirm("重试卡网发货", `将再次向卡网发送订单 ${orderId} 的发货回调。`);
+  const suppress = mode === "suppress";
+  const confirmed = await showConfirm(suppress ? "重试人工发货记录" : "重试卡网发货", suppress ? `将再次向商城记录订单 ${orderId} 已由人工发货。` : `将再次向卡网发送订单 ${orderId} 的发货回调。`);
   if (!confirmed) return;
   retryingOrders.add(orderId);
   renderOrders();
   try {
     const result = await api(`/api/admin/orders/${encodeURIComponent(orderId)}/mark-paid`, {
       method: "POST",
-      body: JSON.stringify({ triggerShopFulfillment: true })
+      body: JSON.stringify({ triggerShopFulfillment: !suppress })
     });
     await loadOrders();
-    if (result.order?.callbackStatus === "processing") alert("卡网回调正在处理中，请稍后刷新查看结果。");
-    else if (result.order?.callbackStatus !== "success") alert("卡网回调仍未成功，请稍后重试。");
+    if (suppress && result.shopFulfillmentSuppressed === false) alert("商城人工发货记录仍未成功，请稍后重试。");
+    else if (!suppress && result.order?.callbackStatus === "processing") alert("卡网回调正在处理中，请稍后刷新查看结果。");
+    else if (!suppress && result.order?.callbackStatus !== "success") alert("卡网回调仍未成功，请稍后重试。");
   } catch (ex) {
     if (ex.status === 401) return;
     alert(adminErrorMessage(ex));

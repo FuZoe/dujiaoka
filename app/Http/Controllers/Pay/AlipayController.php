@@ -85,6 +85,12 @@ class AlipayController extends PayController
             // 验证签名
             $result = $pay->verify();
             if ($result->trade_status == 'TRADE_SUCCESS' || $result->trade_status == 'TRADE_FINISHED') {
+                if ($order->manual_fulfilled_at) {
+                    Log::info('Ignoring Alipay notification for manually fulfilled order', [
+                        'order' => $result->out_trade_no,
+                    ]);
+                    return 'success';
+                }
                 $this->orderProcessService->completedOrder($result->out_trade_no, $result->total_amount, $result->trade_no);
             }
             return 'success';

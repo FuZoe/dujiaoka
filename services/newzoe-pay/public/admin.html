@@ -186,14 +186,14 @@
 
   <!-- Manual payment confirmation dialog -->
   <dialog id="mark-paid-dialog">
-    <div class="dialog-title"><div><p class="eyebrow">人工确认</p><h2>标记订单已支付</h2></div><button class="close-button" type="button" id="close-mark-paid" aria-label="关闭">&times;</button></div>
+      <div class="dialog-title"><div><p class="eyebrow">人工确认</p><h2 id="mark-paid-title">标记订单已支付</h2></div><button class="close-button" type="button" id="close-mark-paid" aria-label="关闭">&times;</button></div>
     <dl class="settlement-summary">
       <div><dt>订单号</dt><dd id="mark-paid-order-id">-</dd></div>
       <div><dt>应收金额</dt><dd id="mark-paid-amount">-</dd></div>
     </dl>
     <label class="choice-row" id="shop-fulfillment-choice">
       <input id="trigger-shop-fulfillment" type="checkbox" checked>
-      <span><strong>继续触发卡网自动发货</strong><small>取消勾选表示已经人工发货，系统将永久跳过此订单的卡网回调。</small></span>
+       <span><strong id="trigger-shop-fulfillment-label">继续触发卡网自动发货</strong><small id="trigger-shop-fulfillment-help">取消勾选表示已经人工发货，系统将永久跳过此订单的卡网回调。</small></span>
     </label>
     <p class="hint" id="manual-order-note" hidden>这是手工收款单，确认后只更新支付状态。</p>
     <p class="form-error" id="mark-paid-error" role="alert"></p>
