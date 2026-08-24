@@ -227,6 +227,17 @@ class ShopApiController extends Controller
             optional($order->pay)->pay_check
         ));
         $gateway = $this->resolveGateway($paymentMethod);
+        // A scheduled pause blocks new selections, but an order that already
+        // selected this gateway must keep its checkout URL until its own
+        // payment deadline. Only allow the stored gateway as the fallback.
+        if (!$gateway && $order->pay_id) {
+            $storedGateway = $this->payService->detailForNotification((int) $order->pay_id);
+            $storedCheck = strtolower((string) optional($storedGateway)->pay_check);
+            $storedId = (string) (int) optional($storedGateway)->id;
+            if ($paymentMethod === '' || $paymentMethod === $storedCheck || $paymentMethod === $storedId) {
+                $gateway = $storedGateway;
+            }
+        }
         if (!$gateway || (!$this->payService->isAvailable($gateway)
                 && (int) $gateway->id !== (int) $order->pay_id)) {
             return $this->failure(

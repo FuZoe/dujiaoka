@@ -82,4 +82,61 @@ class TelegramBotClientTest extends TestCase
             $this->assertStringNotContainsString('TOKEN', $exception->getMessage());
         }
     }
+
+    public function test_it_answers_callback_queries_with_the_expected_options(): void
+    {
+        config(['services.telegram.proxy' => null]);
+        $http = Mockery::mock(ClientInterface::class);
+        $http->shouldReceive('post')
+            ->once()
+            ->with(
+                'https://api.telegram.org/botTOKEN/answerCallbackQuery',
+                Mockery::on(function (array $options): bool {
+                    return $options['json'] === [
+                        'callback_query_id' => 'callback-123',
+                        'text' => '已更新',
+                        'show_alert' => true,
+                    ]
+                    && !isset($options['form_params']);
+                })
+            )
+            ->andReturn(new Response(200, [], json_encode(['ok' => true])));
+
+        (new TelegramBotClient($http))->answerCallbackQuery(
+            'TOKEN',
+            ' callback-123 ',
+            '已更新',
+            true
+        );
+    }
+
+    public function test_it_edits_a_message_without_enabling_link_previews(): void
+    {
+        config(['services.telegram.proxy' => null]);
+        $http = Mockery::mock(ClientInterface::class);
+        $http->shouldReceive('post')
+            ->once()
+            ->with(
+                'https://api.telegram.org/botTOKEN/editMessageText',
+                Mockery::on(function (array $options): bool {
+                    return $options['json']['chat_id'] === '1001'
+                        && $options['json']['message_id'] === 42
+                        && $options['json']['text'] === 'updated text'
+                        && $options['json']['disable_web_page_preview'] === true
+                        && $options['json']['reply_markup']['inline_keyboard'][0][0]['callback_data'] === 'shop:home';
+                })
+            )
+            ->andReturn(new Response(200, [], json_encode(['ok' => true])));
+
+        (new TelegramBotClient($http))->editMessageText(
+            'TOKEN',
+            ' 1001 ',
+            42,
+            'updated text',
+            ['reply_markup' => ['inline_keyboard' => [[[
+                'text' => '首页',
+                'callback_data' => 'shop:home',
+            ]]]]]
+        );
+    }
 }

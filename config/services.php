@@ -41,6 +41,7 @@ return [
     // Owner API credentials. Keep these separate from payment-provider
     // secrets so rotating an integration does not interrupt checkout.
     'shop_api' => [
+        'base_url' => env('DUJIAOKA_API_BASE_URL', env('APP_URL', 'http://localhost')),
         'key' => env('DUJIAOKA_API_KEY', ''),
         'secret' => env('DUJIAOKA_API_SECRET', ''),
         'timestamp_tolerance' => env('DUJIAOKA_API_TIMESTAMP_TOLERANCE', 300),

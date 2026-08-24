@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\TelegramShopInteraction;
+use App\Service\TelegramBotClient;
 use App\Service\TelegramBindingService;
 use Illuminate\Http\Request;
 
@@ -18,6 +20,20 @@ class TelegramWebhookController extends Controller
         $message = $request->input('message', []);
         $text = trim((string) ($message['text'] ?? ''));
         if (!preg_match('/^\/start(?:@[A-Za-z0-9_]+)? bind_([A-Za-z0-9_-]{43})$/', $text, $matches)) {
+            $callbackQuery = $request->input('callback_query', []);
+            if (isset($callbackQuery['id'])) {
+                try {
+                    app(TelegramBotClient::class)->answerCallbackQuery(
+                        (string) dujiaoka_config_get('telegram_bot_token'),
+                        (string) $callbackQuery['id']
+                    );
+                } catch (\Throwable $exception) {
+                    report($exception);
+                }
+            }
+            if ($request->has('message') || $request->has('callback_query')) {
+                TelegramShopInteraction::dispatch($request->all());
+            }
             return response()->json(['ok' => true]);
         }
 

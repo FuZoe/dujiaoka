@@ -46,3 +46,22 @@ supervisorctl status laravel-queue
 ```
 
 生产日志、终端记录、提交和 PR 中均不应出现完整 Bot Token 或 webhook secret。
+
+## Telegram 商城机器人
+
+机器人：[@newzoe_order_bot](https://t.me/newzoe_order_bot)
+
+顾客在机器人私聊中发送 `/start`，或点击菜单中的“浏览商品”，即可完成以下流程：
+
+1. 浏览商品、查看库存和商品说明。
+2. 选择购买数量，填写邮箱、查单密码和商品要求的附加信息。
+3. 选择当前可用的支付方式，点击“前往支付”打开商城支付页。
+4. 在“我的订单”中刷新支付状态；订单完成后点击“查看卡密”。
+
+机器人只处理私聊消息，群组和频道消息会忽略。订单按钮和发货内容只会在创建订单的 Telegram 私聊中可见。下单失败时可以重新点击支付方式，机器人会复用同一个幂等键，避免网络重试产生重复订单。
+
+更新 webhook 时，`telegram:webhook-set` 会同时注册 `callback_query` 更新，并设置 `/start`、`/products`、`/orders`、`/cancel` 命令菜单：
+
+```bash
+php artisan telegram:webhook-set
+```

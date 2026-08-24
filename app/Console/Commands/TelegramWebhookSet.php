@@ -42,8 +42,16 @@ class TelegramWebhookSet extends Command
             $this->request($client, $token, 'setWebhook', [
                 'url' => $url,
                 'secret_token' => $secret,
-                'allowed_updates' => ['message'],
+                'allowed_updates' => ['message', 'callback_query'],
                 'drop_pending_updates' => false,
+            ]);
+            $this->request($client, $token, 'setMyCommands', [
+                'commands' => [
+                    ['command' => 'start', 'description' => '打开 NewZoe 商城'],
+                    ['command' => 'products', 'description' => '浏览商品'],
+                    ['command' => 'orders', 'description' => '查看我的订单'],
+                    ['command' => 'cancel', 'description' => '取消当前流程'],
+                ],
             ]);
         } catch (\Throwable $exception) {
             $this->error('Telegram webhook registration failed: '.get_class($exception));

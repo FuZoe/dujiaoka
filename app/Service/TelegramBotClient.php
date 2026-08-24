@@ -58,4 +58,49 @@ class TelegramBotClient
 
         return (int) $payload['result']['message_id'];
     }
+
+    public function answerCallbackQuery(
+        string $token,
+        string $callbackQueryId,
+        string $text = '',
+        bool $showAlert = false
+    ): void {
+        $this->request($token, 'answerCallbackQuery', [
+            'callback_query_id' => trim($callbackQueryId),
+            'text' => $text,
+            'show_alert' => $showAlert,
+        ]);
+    }
+
+    public function editMessageText(
+        string $token,
+        string $chatId,
+        int $messageId,
+        string $message,
+        array $payload = []
+    ): void {
+        $this->request($token, 'editMessageText', array_merge($payload, [
+            'chat_id' => trim($chatId),
+            'message_id' => $messageId,
+            'text' => $message,
+            'disable_web_page_preview' => true,
+        ]));
+    }
+
+    private function request(string $token, string $method, array $json): void
+    {
+        try {
+            $response = $this->client->post(
+                'https://api.telegram.org/bot'.$token.'/'.$method,
+                array_merge($this->requestOptions, ['json' => $json])
+            );
+        } catch (Throwable $exception) {
+            throw new RuntimeException('Telegram API request failed.');
+        }
+
+        $payload = json_decode((string) $response->getBody(), true);
+        if (empty($payload['ok'])) {
+            throw new RuntimeException('Telegram returned an invalid response.');
+        }
+    }
 }
