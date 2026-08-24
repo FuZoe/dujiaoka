@@ -9,8 +9,7 @@ METHOD=GET
 PATH_INFO=/api/v1/products
 TIMESTAMP="$(date +%s)"
 NONCE="api-smoke-$(date +%s%N)"
-CANONICAL="$(printf '%s\n%s\n%s\n%s\n' "$METHOD" "$PATH_INFO" "$TIMESTAMP" "$NONCE")"
-SIGNATURE="$(printf '%s' "$CANONICAL" | openssl dgst -sha256 -hmac "$API_SECRET" | awk '{print $NF}')"
+SIGNATURE="$(printf '%s\n%s\n%s\n%s\n' "$METHOD" "$PATH_INFO" "$TIMESTAMP" "$NONCE" | openssl dgst -sha256 -hmac "$API_SECRET" | awk '{print $NF}')"
 
 curl -fsS "$BASE_URL$PATH_INFO" \
   -H "X-Api-Key: $API_KEY" \
