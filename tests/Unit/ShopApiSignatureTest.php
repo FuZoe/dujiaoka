@@ -11,6 +11,9 @@ class ShopApiSignatureTest extends TestCase
     public function test_canonical_string_covers_query_and_raw_body(): void
     {
         $request = Request::create('/api/v1/orders?b=2&a=1', 'POST', [], [], [], [], '{"product_id":12}');
+        // Symfony rebuilds query parameters when Request::create() is used;
+        // emulate the raw URL that a real HTTP server supplies.
+        $request->server->set('REQUEST_URI', '/api/v1/orders?b=2&a=1');
 
         $this->assertSame(
             "POST\n/api/v1/orders?b=2&a=1\n1700000000\nnonce-1234\n{\"product_id\":12}",

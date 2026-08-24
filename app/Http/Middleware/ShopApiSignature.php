@@ -66,7 +66,14 @@ class ShopApiSignature
     public static function canonical(Request $request, string $timestamp, string $nonce): string
     {
         $path = $request->getPathInfo();
-        $query = $request->getQueryString();
+        // getQueryString() is rebuilt from parsed parameters and may reorder
+        // them. Sign the raw query from REQUEST_URI so the client and server
+        // cover the exact bytes sent over the wire.
+        $rawUri = (string) $request->server->get('REQUEST_URI', '');
+        $question = strpos($rawUri, '?');
+        $query = $question === false
+            ? $request->getQueryString()
+            : substr($rawUri, $question + 1);
 
         if ($query !== null && $query !== '') {
             $path .= '?'.$query;
