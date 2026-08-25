@@ -1533,6 +1533,48 @@ test('remote-completed Alipay orders stay paid locally after their checkout wind
   });
 });
 
+test('a remote paid-but-abnormal shop order stays paid locally', async () => {
+  const shopOrder = {
+    amountFen: 1504,
+    callbackUrl: 'https://shop.newzoe.cloud/pay/newzoe/notify_url',
+    createdAt: new Date(NOW - 60 * 60 * 1000).toISOString(),
+    expiresAt: new Date(NOW - 40 * 60 * 1000).toISOString(),
+    id: 'ALIPAYREMOTE04',
+    matchExpiresAt: new Date(NOW - 35 * 60 * 1000).toISOString(),
+    paymentMethod: 'aliweb',
+    paymentName: '支付宝',
+    paymentReceived: true,
+    returnUrl: 'https://shop.newzoe.cloud/detail-order-sn/ALIPAYREMOTE04',
+    source: 'dujiaoka',
+    status: 6,
+    title: '支付成功但发货异常',
+    transactionId: 'ALIPAY-ABNORMAL-04',
+    updatedAt: new Date(NOW - 59 * 60 * 1000).toISOString()
+  };
+  await withServer(async (baseUrl) => {
+    const loginResponse = await fetch(`${baseUrl}/api/admin/login`, {
+      body: JSON.stringify({ password: 'test-admin-password', username: 'admin' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST'
+    });
+    const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+    const response = await fetch(`${baseUrl}/api/admin/orders`, { headers: { cookie } });
+    assert.equal(response.status, 200);
+    const order = (await response.json()).orders.find((item) => item.id === shopOrder.id);
+    assert.equal(order.status, 'paid');
+    assert.equal(order.payment.status, 'paid');
+    assert.equal(order.payment.externalStatus, 'abnormal');
+  }, {
+    adminPassword: 'test-admin-password',
+    fetchImpl: async (url) => {
+      if (String(url) === 'https://shop.test/api/newzoe/orders') return { ok: true, status: 200, json: async () => ({ orders: [shopOrder] }) };
+      return { ok: true, status: 200 };
+    },
+    sessionSecret: 'test-session-secret-with-more-than-thirty-two-characters',
+    shopOrdersUrl: 'https://shop.test/api/newzoe/orders'
+  });
+});
+
 test('malformed external Alipay amounts are not materialized for manual settlement', async () => {
   const shopOrders = [
     {
@@ -1767,6 +1809,8 @@ test('failed shop fulfillment can be retried without settling the order twice', 
     assert.equal(callbacks.length, 2);
     assert.equal(JSON.parse(callbacks[0].request.body).manualOverride, true);
     assert.equal(JSON.parse(callbacks[1].request.body).manualOverride, true);
+    assert.equal(JSON.parse(callbacks[0].request.body).fulfillmentRetry, undefined);
+    assert.equal(JSON.parse(callbacks[1].request.body).fulfillmentRetry, true);
 
     const completedRetry = await fetch(`${baseUrl}/api/admin/orders/CALLBACKRETRY01/mark-paid`, {
       body: JSON.stringify({ triggerShopFulfillment: true }),

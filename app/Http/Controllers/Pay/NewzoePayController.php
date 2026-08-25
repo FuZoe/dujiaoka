@@ -89,6 +89,7 @@ class NewzoePayController extends PayController
         $rawAmountFen = $payload['amountFen'] ?? null;
         $transactionId = (string) ($payload['transactionId'] ?? '');
         $manualOverride = ($payload['manualOverride'] ?? false) === true;
+        $fulfillmentRetry = ($payload['fulfillmentRetry'] ?? false) === true;
         $order = $this->orderService->detailOrderSN($orderSN);
         if (!$order) {
             return response()->json(['error' => 'order_not_found'], 404);
@@ -117,6 +118,22 @@ class NewzoePayController extends PayController
 
             return response()->json(['accepted' => true, 'duplicate' => true]);
         }
+        if (in_array((int) $order->status, [
+            Order::STATUS_ABNORMAL,
+            Order::STATUS_FAILURE,
+        ], true) && !$fulfillmentRetry) {
+            if ((string) $order->trade_no !== ''
+                && hash_equals((string) $order->trade_no, $transactionId)
+                && bccomp((string) $order->actual_price, $callbackAmount, 2) === 0) {
+                return response()->json([
+                    'accepted' => true,
+                    'paid' => true,
+                    'fulfillment' => 'failed',
+                    'duplicate' => true,
+                ], 409);
+            }
+            return response()->json(['error' => 'transaction_id_conflict'], 409);
+        }
         $paymentWindow = app(NewzoePaymentWindow::class);
         $matchedAt = null;
         try {
@@ -132,6 +149,12 @@ class NewzoePayController extends PayController
             Order::STATUS_EXPIRED,
         ], true);
         $allowExpiredCompletion = $manualCompletion || $settledWithinResponseWindow;
+        if ($fulfillmentRetry && in_array((int) $order->status, [
+            Order::STATUS_ABNORMAL,
+            Order::STATUS_FAILURE,
+        ], true)) {
+            $allowExpiredCompletion = true;
+        }
         if (!$allowExpiredCompletion && (
             (int) $order->status !== Order::STATUS_WAIT_PAY
             || !$paymentWindow->responseIsOpen($order)
@@ -140,12 +163,33 @@ class NewzoePayController extends PayController
         }
 
         try {
-            $this->orderProcessService->completedOrder(
-                $orderSN,
-                (float) $callbackAmount,
-                $transactionId,
-                $allowExpiredCompletion
-            );
+            if ($fulfillmentRetry) {
+                $completedOrder = $this->orderProcessService->completedOrder(
+                    $orderSN,
+                    (float) $callbackAmount,
+                    $transactionId,
+                    $allowExpiredCompletion,
+                    true
+                );
+            } else {
+                $completedOrder = $this->orderProcessService->completedOrder(
+                    $orderSN,
+                    (float) $callbackAmount,
+                    $transactionId,
+                    $allowExpiredCompletion
+                );
+            }
+            if (in_array((int) $completedOrder->status, [
+                Order::STATUS_ABNORMAL,
+                Order::STATUS_FAILURE,
+            ], true)) {
+                return response()->json([
+                    'accepted' => true,
+                    'paid' => true,
+                    'fulfillment' => 'failed',
+                    'orderStatus' => (int) $completedOrder->status,
+                ], 409);
+            }
             return response()->json(['accepted' => true]);
         } catch (RuleValidationException $exception) {
             return response()->json(['error' => $exception->getMessage()], 422);

@@ -122,6 +122,17 @@ class NewzoeApiController extends Controller
                     'returnUrl' => url('detail-order-sn', ['orderSN' => $order->order_sn]),
                     'source' => 'dujiaoka',
                     'status' => $order->status,
+                    'paymentReceived' => in_array((int) $order->status, [
+                        Order::STATUS_PENDING,
+                        Order::STATUS_PROCESSING,
+                        Order::STATUS_COMPLETED,
+                    ], true) || ((int) $order->status > Order::STATUS_WAIT_PAY
+                        && (int) $order->status !== Order::STATUS_EXPIRED
+                        && trim((string) $order->trade_no) !== ''),
+                    'fulfilled' => (int) $order->status === Order::STATUS_COMPLETED,
+                    'transactionId' => trim((string) $order->trade_no) !== ''
+                        ? (string) $order->trade_no
+                        : null,
                     'title' => $order->title,
                     'updatedAt' => optional($order->updated_at)->toIso8601String(),
                 ];

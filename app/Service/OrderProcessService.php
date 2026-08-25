@@ -387,6 +387,7 @@ class OrderProcessService
      * @param float $actualPrice 实际支付金额
      * @param string $tradeNo 第三方订单号
      * @param bool $allowExpired 是否允许签名保护的人工补单恢复过期订单
+     * @param bool $allowFulfillmentRetry 是否允许签名保护的发货重试恢复异常订单
      * @return Order
      *
      * @author    assimon<ashang@utf8.hk>
@@ -397,7 +398,8 @@ class OrderProcessService
         string $orderSN,
         float $actualPrice,
         string $tradeNo = '',
-        bool $allowExpired = false
+        bool $allowExpired = false,
+        bool $allowFulfillmentRetry = false
     )
     {
         DB::beginTransaction();
@@ -419,6 +421,10 @@ class OrderProcessService
             ];
             if ($allowExpired) {
                 $allowedStatuses[] = Order::STATUS_EXPIRED;
+            }
+            if ($allowFulfillmentRetry) {
+                $allowedStatuses[] = Order::STATUS_ABNORMAL;
+                $allowedStatuses[] = Order::STATUS_FAILURE;
             }
             if (!in_array((int) $order->status, $allowedStatuses, true)) {
                 if ($tradeNo !== ''
@@ -450,14 +456,40 @@ class OrderProcessService
             $order->trade_no = $tradeNo;
             // 区分订单类型
             // 自动发货
-            if ($order->type == Order::AUTOMATIC_DELIVERY) {
-                $completedOrder = $this->processAuto($order);
-            } else {
-                $completedOrder = $this->processManual($order);
+            $deliveryException = false;
+            try {
+                if ($order->type == Order::AUTOMATIC_DELIVERY) {
+                    $completedOrder = $this->processAuto($order);
+                } else {
+                    $completedOrder = $this->processManual($order);
+                }
+            } catch (\Throwable $fulfillmentException) {
+                // A verified payment must survive a delivery-side failure. Roll
+                // back inventory changes first, then persist the payment and
+                // the abnormal fulfillment state in a clean transaction.
+                $deliveryException = true;
+                DB::rollBack();
+                $completedOrder = $this->persistPaidFulfillmentFailure(
+                    $orderSN,
+                    $actualPrice,
+                    $tradeNo,
+                    $fulfillmentException->getMessage()
+                );
+                $order = $completedOrder;
             }
-            // 销量加上
-            $this->goodsService->salesVolumeIncr($order->goods_id, $order->buy_amount);
-            DB::commit();
+
+            // Payment settlement and delivery are separate states. An order
+            // that could not claim inventory is paid, but must not count as a
+            // sale until a later fulfillment retry actually completes.
+            if (!$deliveryException) {
+                if (!in_array((int) $completedOrder->status, [
+                    Order::STATUS_ABNORMAL,
+                    Order::STATUS_FAILURE,
+                ], true)) {
+                    $this->goodsService->salesVolumeIncr($order->goods_id, $order->buy_amount);
+                }
+                DB::commit();
+            }
             $telegramOrders = app(TelegramOrderNotificationService::class);
             $telegramOrders->queuePaid($completedOrder);
             $telegramOrders->queueStatus($completedOrder);
@@ -477,7 +509,53 @@ class OrderProcessService
             ApiHook::dispatch($order);
             return $completedOrder;
         } catch (\Exception $exception) {
-            DB::rollBack();
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
+            throw new RuleValidationException($exception->getMessage());
+        }
+    }
+
+    /**
+     * Persist a confirmed payment when inventory or another delivery step
+     * fails. The caller has already rolled back the original transaction so
+     * no partially claimed cards can be committed with the abnormal order.
+     */
+    private function persistPaidFulfillmentFailure(
+        string $orderSN,
+        float $actualPrice,
+        string $tradeNo,
+        string $reason
+    ): Order {
+        DB::beginTransaction();
+        try {
+            $order = Order::query()
+                ->with(['coupon', 'pay', 'goods'])
+                ->where('order_sn', $orderSN)
+                ->lockForUpdate()
+                ->first();
+            if (!$order) {
+                throw new \Exception(__('dujiaoka.prompt.order_does_not_exist'));
+            }
+            if (bccomp($order->actual_price, $actualPrice, 2) !== 0) {
+                throw new \Exception(__('dujiaoka.prompt.order_inconsistent_amounts'));
+            }
+
+            $order->actual_price = $actualPrice;
+            $order->trade_no = $tradeNo;
+            $order->status = Order::STATUS_ABNORMAL;
+            $message = '支付已确认，卡网发货失败，请补货后重试。';
+            if ($reason !== '') {
+                $message .= PHP_EOL . '失败原因：' . mb_substr($reason, 0, 500);
+            }
+            $order->info = $message;
+            $order->save();
+            DB::commit();
+            return $order;
+        } catch (\Throwable $exception) {
+            if (DB::transactionLevel() > 0) {
+                DB::rollBack();
+            }
             throw new RuleValidationException($exception->getMessage());
         }
     }

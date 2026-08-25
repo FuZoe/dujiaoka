@@ -337,7 +337,53 @@ class NewzoePaymentLifecycleTest extends TestCase
         $this->assertSame(['error' => 'amount_conflict'], $response->getData(true));
     }
 
-    public function test_card_claim_count_mismatch_rolls_back_order_completion(): void
+    public function test_callback_keeps_payment_successful_when_fulfillment_is_abnormal(): void
+    {
+        $order = $this->inMemoryOrder(Carbon::parse('2026-08-17 12:00:00'));
+        $order->status = Order::STATUS_ABNORMAL;
+        $order->trade_no = 'ABNORMAL-TRANSACTION-1';
+        $processor = Mockery::mock();
+        $processor->shouldNotReceive('completedOrder');
+
+        $response = $this->controllerFor($order, $processor)->notifyUrl($this->signedRequest([
+            'orderId' => $order->order_sn,
+            'amountFen' => 401,
+            'transactionId' => 'ABNORMAL-TRANSACTION-1',
+        ]));
+
+        $this->assertSame(409, $response->getStatusCode());
+        $this->assertSame([
+            'accepted' => true,
+            'paid' => true,
+            'fulfillment' => 'failed',
+            'duplicate' => true,
+        ], $response->getData(true));
+    }
+
+    public function test_callback_can_retry_an_abnormal_paid_order(): void
+    {
+        $order = $this->inMemoryOrder(Carbon::parse('2026-08-17 12:00:00'), Order::STATUS_ABNORMAL);
+        $order->trade_no = 'ABNORMAL-TRANSACTION-2';
+        $completed = clone $order;
+        $completed->status = Order::STATUS_COMPLETED;
+        $processor = Mockery::mock();
+        $processor->shouldReceive('completedOrder')
+            ->once()
+            ->with($order->order_sn, 4.01, 'ABNORMAL-TRANSACTION-2', true, true)
+            ->andReturn($completed);
+
+        $response = $this->controllerFor($order, $processor)->notifyUrl($this->signedRequest([
+            'orderId' => $order->order_sn,
+            'amountFen' => 401,
+            'transactionId' => 'ABNORMAL-TRANSACTION-2',
+            'fulfillmentRetry' => true,
+        ]));
+
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame(['accepted' => true], $response->getData(true));
+    }
+
+    public function test_card_claim_count_mismatch_keeps_payment_and_marks_fulfillment_abnormal(): void
     {
         $createdAt = Carbon::parse('2026-08-17 12:00:00');
         $order = $this->storedNewzoeOrder($createdAt);
@@ -363,8 +409,8 @@ class NewzoePaymentLifecycleTest extends TestCase
         $goods = Mockery::mock();
         $goods->shouldNotReceive('salesVolumeIncr');
         $telegram = Mockery::mock();
-        $telegram->shouldNotReceive('queuePaid');
-        $telegram->shouldNotReceive('queueStatus');
+        $telegram->shouldReceive('queuePaid')->once();
+        $telegram->shouldReceive('queueStatus')->once();
 
         $this->app->instance('Service\\CouponService', Mockery::mock());
         $this->app->instance('Service\\OrderService', Mockery::mock());
@@ -373,21 +419,74 @@ class NewzoePaymentLifecycleTest extends TestCase
         $this->app->instance('Service\\GoodsService', $goods);
         $this->app->instance(TelegramOrderNotificationService::class, $telegram);
 
-        try {
-            (new OrderProcessService())->completedOrder(
-                $order->order_sn,
-                4.01,
-                'CONTENDED-TRANSACTION-1'
-            );
-            $this->fail('A partial card claim must abort order completion.');
-        } catch (RuleValidationException $exception) {
-            $this->assertStringContainsString('卡密库存已被其他订单占用', $exception->getMessage());
-        }
+        $settled = (new OrderProcessService())->completedOrder(
+            $order->order_sn,
+            4.01,
+            'CONTENDED-TRANSACTION-1'
+        );
 
         $persisted = $order->fresh();
-        $this->assertSame(Order::STATUS_WAIT_PAY, (int) $persisted->status);
-        $this->assertSame('', (string) $persisted->trade_no);
+        $this->assertSame(Order::STATUS_ABNORMAL, (int) $settled->status);
+        $this->assertSame(Order::STATUS_ABNORMAL, (int) $persisted->status);
+        $this->assertSame('CONTENDED-TRANSACTION-1', (string) $persisted->trade_no);
+        $this->assertStringContainsString('支付已确认，卡网发货失败', (string) $persisted->info);
         $this->assertSame(0, DB::transactionLevel());
+    }
+
+    public function test_fulfillment_retry_can_recover_an_abnormal_paid_order(): void
+    {
+        $createdAt = Carbon::parse('2026-08-17 12:00:00');
+        $order = $this->storedNewzoeOrder($createdAt);
+        $this->buildFulfilmentTables();
+        DB::table('goods')->insert([
+            'id' => 1,
+            'gd_name' => 'Restocked product',
+            'created_at' => $createdAt,
+            'updated_at' => $createdAt,
+        ]);
+        DB::table('orders')->where('id', $order->id)->update([
+            'goods_id' => 1,
+            'status' => Order::STATUS_ABNORMAL,
+            'trade_no' => 'CONTENDED-TRANSACTION-2',
+        ]);
+
+        $carmis = Mockery::mock();
+        $carmis->shouldReceive('withGoodsByAmountAndStatusUnsold')
+            ->once()->with(1, 1)->andReturn([[
+                'id' => 12,
+                'carmi' => 'RESTOCKED-CARD',
+                'is_loop' => 0,
+            ]]);
+        $carmis->shouldReceive('soldByIDS')->once()->with([12])->andReturn(1);
+        $emailTemplates = Mockery::mock();
+        $emailTemplates->shouldReceive('detailByToken')->once()->with('card_send_user_email')->andReturn([
+            'tpl_name' => 'Order {order_id}',
+            'tpl_content' => '{ord_info}',
+        ]);
+        $goods = Mockery::mock();
+        $goods->shouldReceive('salesVolumeIncr')->once()->with(1, 1);
+        $telegram = Mockery::mock();
+        $telegram->shouldReceive('queuePaid')->once();
+        $telegram->shouldReceive('queueStatus')->once();
+
+        $this->app->instance('Service\\CouponService', Mockery::mock());
+        $this->app->instance('Service\\OrderService', Mockery::mock());
+        $this->app->instance('Service\\CarmisService', $carmis);
+        $this->app->instance('Service\\EmailtplService', $emailTemplates);
+        $this->app->instance('Service\\GoodsService', $goods);
+        $this->app->instance(TelegramOrderNotificationService::class, $telegram);
+
+        $settled = (new OrderProcessService())->completedOrder(
+            $order->order_sn,
+            4.01,
+            'CONTENDED-TRANSACTION-2',
+            false,
+            true
+        );
+
+        $this->assertSame(Order::STATUS_COMPLETED, (int) $settled->status);
+        $this->assertSame(Order::STATUS_COMPLETED, (int) $order->fresh()->status);
+        $this->assertSame('CONTENDED-TRANSACTION-2', (string) $order->fresh()->trade_no);
     }
 
     public function test_callback_is_accepted_just_before_response_deadline(): void

@@ -59,6 +59,12 @@ function shopStatusSettled(value){
 const status=shopStatusKey(value);
 return status==='paid'||status==='completed';
 }
+function shopPaymentReceived(order){
+if(order?.paymentReceived===true)return true;
+if(shopStatusSettled(order?.status))return true;
+const status=shopStatusKey(order?.status);
+return ['abnormal','failed'].includes(status)&&String(order?.transactionId||'').trim()!=='';
+}
 function sameOriginUrl(value,fallback,allowedOrigin){
 try{const parsed=new URL(String(value||''));const base=new URL(String(allowedOrigin));if(parsed.origin!==base.origin||parsed.protocol!==base.protocol)return fallback;return parsed.toString()}catch{return fallback}
 }
@@ -232,12 +238,12 @@ persist();
 return sendJson(res,created?201:200,{order:pubOrder(order),paymentUrl:'https://pay.newzoe.cloud/'+id});
 }
 
-async function cbShop(order,tid,{manualOverride=false,manualFulfilled=false}={}){
+async function cbShop(order,tid,{manualOverride=false,manualFulfilled=false,fulfillmentRetry=false}={}){
 if(order.source!=='dujiaoka'||!order.callbackUrl||!shopSecret||(!manualFulfilled&&order.callbackSuppressedAt)||(!manualFulfilled&&order.callbackStatus==='success'))return{attempted:false};
 const priorStarted=Date.parse(order.callbackStartedAt||0);
 if(order.callbackStatus==='processing'&&Number.isFinite(priorStarted)&&priorStarted>now()-CALLBACK_LEASE)return{attempted:false,inProgress:true};
 order.callbackStatus='processing';order.callbackStartedAt=new Date(now()).toISOString();order.callbackAttempts=Number(order.callbackAttempts||0)+1;order.updatedAt=order.callbackStartedAt;persist();
-const pl=JSON.stringify({amountFen:order.baseAmountFen||order.amountFen,matchedAt:order.settledAt,paidAmountFen:order.amountFen,orderId:order.id,paidAt:order.paidAt,transactionId:tid,...(manualOverride?{manualOverride:true}:{}),...(manualFulfilled?{manualFulfilled:true}:{})});
+const pl=JSON.stringify({amountFen:order.baseAmountFen||order.amountFen,matchedAt:order.settledAt,paidAmountFen:order.amountFen,orderId:order.id,paidAt:order.paidAt,transactionId:tid,...(manualOverride?{manualOverride:true}:{}),...(manualFulfilled?{manualFulfilled:true}:{}),...(fulfillmentRetry?{fulfillmentRetry:true}:{})});
 const ts=String(now());
 try{const r=await fetchImpl(order.callbackUrl,{body:pl,headers:{'content-type':'application/json','x-shop-signature':signPayload(shopSecret,ts,Buffer.from(pl)),'x-shop-timestamp':ts},method:'POST',signal:AbortSignal.timeout(15000)});order.callbackStatus=r.ok?'success':'http_'+r.status}catch(e){order.callbackStatus='error';console.error('cb fail',order.id,e.message)}
 order.updatedAt=new Date(now()).toISOString();persist()
@@ -430,7 +436,7 @@ const amountFen=parseAmountFen(so.amountFen);
 if(!Number.isSafeInteger(amountFen)||amountFen<1||amountFen>MAX_AMOUNT_FEN)return null;
 const manualSuppressUrl=sameOriginUrl(so.manualSuppressUrl||so.suppressUrl,`${cbOrigin}/api/newzoe/manual-suppress`,cbOrigin);
 const externalStatus=shopStatusKey(so.status);
-const settled=shopStatusSettled(externalStatus);
+const settled=shopPaymentReceived(so);
 const remoteUpdated=Date.parse(String(so.updatedAt||so.createdAt||''));
 const settledAt=Number.isFinite(remoteUpdated)?new Date(remoteUpdated).toISOString():createdAt;
 const order={activatedAt:createdAt,amountFen,baseAmountFen:amountFen,callbackStatus:'waiting',callbackUrl,createdAt,expiresAt,externalStatus,id,manualOnly:true,manualSuppressUrl,matchExpiresAt,paymentMethod:'alipay',paymentMethodOriginal:'alipay',returnUrl,source:'dujiaoka',status:settled?'paid':'pending',title:String(so.title||'支付宝订单').slice(0,160),payee:'admin',updatedAt:createdAt,...(settled?{paidAt:settledAt,settledAt}:{})};
@@ -438,7 +444,7 @@ state.orders.push(order);if(save)persist();return order;
 }
 async function fetchShopOrders(){
 if(!shopOrdUrl||!shopSecret||!fetchImpl)return[];
-try{const r=await fetchImpl(shopOrdUrl,{headers:{'x-newzoe-key':shopSecret}});if(!r.ok)return[];const p=await r.json();const list=(Array.isArray(p.orders)?p.orders:[]).map(so=>({...so,id:String(so?.id||'').toUpperCase()}));const beforeCount=state.orders.length;let changed=false;for(const so of list){const materialized=materializeAlipayOrder(so,false);const remoteStatus=shopStatusKey(so.status);if(materialized&&materialized.externalStatus!==remoteStatus){materialized.externalStatus=remoteStatus;materialized.updatedAt=new Date(now()).toISOString();changed=true}if(materialized&&shopStatusSettled(remoteStatus)&&materialized.status==='pending'){const remoteUpdated=Date.parse(String(so.updatedAt||so.createdAt||''));const settledAt=Number.isFinite(remoteUpdated)?new Date(remoteUpdated).toISOString():new Date(now()).toISOString();materialized.status='paid';materialized.paidAt=materialized.paidAt||settledAt;materialized.settledAt=materialized.settledAt||settledAt;materialized.updatedAt=new Date(now()).toISOString();changed=true}}if(changed||state.orders.length!==beforeCount)persist();return list}catch(e){console.error('sync fail:',e.message);return[]}
+try{const r=await fetchImpl(shopOrdUrl,{headers:{'x-newzoe-key':shopSecret}});if(!r.ok)return[];const p=await r.json();const list=(Array.isArray(p.orders)?p.orders:[]).map(so=>({...so,id:String(so?.id||'').toUpperCase()}));const beforeCount=state.orders.length;let changed=false;for(const so of list){const materialized=materializeAlipayOrder(so,false);const remoteStatus=shopStatusKey(so.status);if(materialized&&materialized.externalStatus!==remoteStatus){materialized.externalStatus=remoteStatus;materialized.updatedAt=new Date(now()).toISOString();changed=true}if(materialized&&shopPaymentReceived(so)&&materialized.status==='pending'){const remoteUpdated=Date.parse(String(so.updatedAt||so.createdAt||''));const settledAt=Number.isFinite(remoteUpdated)?new Date(remoteUpdated).toISOString():new Date(now()).toISOString();materialized.status='paid';materialized.paidAt=materialized.paidAt||settledAt;materialized.settledAt=materialized.settledAt||settledAt;materialized.updatedAt=new Date(now()).toISOString();changed=true}}if(changed||state.orders.length!==beforeCount)persist();return list}catch(e){console.error('sync fail:',e.message);return[]}
 }
 async function refreshExternalOrder(order){
 if(!order?.manualOnly||order.paymentMethodOriginal!=='alipay')return{ok:true,order:null};
@@ -550,7 +556,9 @@ const payment=po?publicOrder(po):null;
 const externalStatus=shopStatusKey(so.status);
 const status=payment?.manualOnly&&payment.status==='paid'&&['pending','expired'].includes(externalStatus)
   ?'paid'
-  :externalStatus;
+  :payment?.status==='paid'&&['pending','expired','abnormal','failed'].includes(externalStatus)
+    ?'paid'
+    :externalStatus;
 return{...so,id:normalizedId,amountFen:payment?.amountFen||so.amountFen,baseAmountFen:payment?.baseAmountFen||so.amountFen,paymentMethod:payment?.paymentMethod||normalizePaymentMethod(so.paymentMethod,so.paymentName),payee:'admin',status,payment}
 });
 for(const o of localById.values()){const payment=publicOrder(o);merged.push({amountFen:o.amountFen,baseAmountFen:o.baseAmountFen||o.amountFen,createdAt:o.createdAt,expiresAt:o.expiresAt,id:o.id,source:o.source,status:payment.status,title:o.title,payee:orderPayee(o),payment})}
@@ -599,7 +607,7 @@ if(isAlipay&&p.triggerShopFulfillment===false&&!order.callbackSuppressedAt){
  return sendJson(res,200,{duplicate:true,order:pubOrder(order),shopFulfillmentSuppressed:suppression.success,shopFulfillmentSuppressionAttempted:suppression.attempted,shopFulfillmentSuppressionError:suppression.success?'':(suppression.error||`http_${suppression.status||'error'}`),shopFulfillmentRetried:false,shopFulfillmentTriggered:false})
 }
 const shouldRetry=order.source==='dujiaoka'&&p.triggerShopFulfillment===true&&!order.callbackSuppressedAt&&order.callbackStatus!=='success';
-const retryResult=shouldRetry?await cbShop(order,order.transactionId||('manual-retry-'+order.id),{manualOverride:true}):{attempted:false};
+const retryResult=shouldRetry?await cbShop(order,order.transactionId||('manual-retry-'+order.id),{manualOverride:true,fulfillmentRetry:true}):{attempted:false};
 return sendJson(res,200,{duplicate:true,order:pubOrder(order),shopFulfillmentRetried:retryResult.attempted,shopFulfillmentTriggered:retryResult.attempted})
 }
 if(order.status!=='pending')return sendJson(res,409,{error:'invalid_order_status'});

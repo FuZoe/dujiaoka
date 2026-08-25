@@ -370,14 +370,25 @@ class ShopApiController extends Controller
             return $this->failure('internal_error', 'The order could not be settled.', 500);
         }
 
-        return $this->success([
+        $fulfillmentFailed = in_array((int) $settled->status, [
+            Order::STATUS_ABNORMAL,
+            Order::STATUS_FAILURE,
+        ], true);
+        $response = [
             'accepted' => true,
+            'payment_received' => true,
             'order' => $this->orderPayload($settled),
             'delivery' => [
-                'available' => (int) $settled->status === Order::STATUS_COMPLETED,
+                'available' => !$fulfillmentFailed && (int) $settled->status === Order::STATUS_COMPLETED,
                 'status' => $this->statusKey((int) $settled->status),
             ],
-        ]);
+        ];
+        if ($fulfillmentFailed) {
+            $response['fulfillment'] = 'failed';
+            return $this->success($response, 409);
+        }
+
+        return $this->success($response);
     }
 
     private function validateCreatePayload(Request $request)
