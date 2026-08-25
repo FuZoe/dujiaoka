@@ -45,14 +45,42 @@ class TelegramWebhookSet extends Command
                 'allowed_updates' => ['message', 'callback_query'],
                 'drop_pending_updates' => false,
             ]);
-            $this->request($client, $token, 'setMyCommands', [
-                'commands' => [
-                    ['command' => 'start', 'description' => '打开 NewZoe 商城'],
-                    ['command' => 'products', 'description' => '浏览商品'],
-                    ['command' => 'orders', 'description' => '查看我的订单'],
-                    ['command' => 'cancel', 'description' => '取消当前流程'],
+            $commandSets = [
+                [
+                    'language_code' => null,
+                    'commands' => [
+                        ['command' => 'start', 'description' => '打开 NewZoe 商城'],
+                        ['command' => 'products', 'description' => '浏览商品'],
+                        ['command' => 'orders', 'description' => '查看我的订单'],
+                        ['command' => 'cancel', 'description' => '取消当前流程'],
+                    ],
                 ],
-            ]);
+                [
+                    'language_code' => 'en',
+                    'commands' => [
+                        ['command' => 'start', 'description' => 'Open NewZoe Shop'],
+                        ['command' => 'products', 'description' => 'Browse products'],
+                        ['command' => 'orders', 'description' => 'View my orders'],
+                        ['command' => 'cancel', 'description' => 'Cancel current process'],
+                    ],
+                ],
+                [
+                    'language_code' => 'vi',
+                    'commands' => [
+                        ['command' => 'start', 'description' => 'Mở NewZoe Shop'],
+                        ['command' => 'products', 'description' => 'Duyệt sản phẩm'],
+                        ['command' => 'orders', 'description' => 'Xem đơn hàng'],
+                        ['command' => 'cancel', 'description' => 'Hủy quy trình hiện tại'],
+                    ],
+                ],
+            ];
+            foreach ($commandSets as $commandSet) {
+                $payload = ['commands' => $commandSet['commands']];
+                if ($commandSet['language_code'] !== null) {
+                    $payload['language_code'] = $commandSet['language_code'];
+                }
+                $this->request($client, $token, 'setMyCommands', $payload);
+            }
         } catch (\Throwable $exception) {
             $this->error('Telegram webhook registration failed: '.get_class($exception));
             return 1;

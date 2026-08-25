@@ -28,11 +28,17 @@ class TelegramShopBotServiceTest extends TestCase
         $telegram->shouldReceive('sendMessage')
             ->once()
             ->withArgs(function (string $token, string $chatId, string $text, array $payload): bool {
+                $buttons = [];
+                foreach (($payload['reply_markup']['inline_keyboard'] ?? []) as $row) {
+                    $buttons = array_merge($buttons, (array) $row);
+                }
+                $callbacks = array_column($buttons, 'callback_data');
+
                 return $token === 'BOT_TOKEN'
                     && $chatId === '1001'
                     && strpos($text, '欢迎来到 NewZoe 商城') !== false
-                    && $payload['reply_markup']['inline_keyboard'][0][0]['callback_data'] === 'shop:products:0'
-                    && $payload['reply_markup']['inline_keyboard'][0][1]['callback_data'] === 'shop:orders';
+                    && in_array('shop:products:0', $callbacks, true)
+                    && in_array('shop:orders', $callbacks, true);
             })
             ->andReturn(10);
         $telegram->shouldNotReceive('editMessageText');
@@ -234,6 +240,133 @@ class TelegramShopBotServiceTest extends TestCase
             'message' => [
                 'message_id' => 90,
                 'chat' => ['id' => 1004, 'type' => 'private'],
+            ],
+        ]);
+    }
+
+    public function test_start_uses_vietnamese_telegram_locale_and_exposes_language_switcher(): void
+    {
+        $api = Mockery::mock(ShopApiClient::class);
+        $telegram = Mockery::mock(TelegramBotClient::class);
+        $telegram->shouldReceive('sendMessage')
+            ->once()
+            ->withArgs(function (string $token, string $chatId, string $text, array $payload): bool {
+                $buttons = [];
+                foreach (($payload['reply_markup']['inline_keyboard'] ?? []) as $row) {
+                    $buttons = array_merge($buttons, (array) $row);
+                }
+                $buttonCallbacks = array_column($buttons, 'callback_data');
+                $buttonLabels = array_column($buttons, 'text');
+
+                return $token === 'BOT_TOKEN'
+                    && $chatId === '2001'
+                    && strpos($text, 'Chào mừng bạn đến NewZoe Shop') !== false
+                    && strpos($text, '欢迎来到 NewZoe 商城') === false
+                    && in_array('shop:languages', $buttonCallbacks, true)
+                    && (bool) array_filter($buttonLabels, function (string $label): bool {
+                        return strpos($label, 'Ngôn ngữ') !== false;
+                    });
+            });
+
+        (new TelegramShopBotService($api, $telegram))->handleMessage([
+            'chat' => ['id' => 2001, 'type' => 'private'],
+            'from' => ['language_code' => 'vi-VN'],
+            'text' => '/start',
+        ]);
+    }
+
+    public function test_switching_to_english_translates_product_ui_but_keeps_product_name(): void
+    {
+        $api = Mockery::mock(ShopApiClient::class);
+        $api->shouldReceive('products')->once()->andReturn([
+            'products' => [
+                [
+                    'id' => 42,
+                    'name' => '云服务套餐',
+                    'price' => '9.90',
+                    'stock' => 3,
+                ],
+            ],
+        ]);
+        $telegram = Mockery::mock(TelegramBotClient::class);
+        $telegram->shouldReceive('answerCallbackQuery')->zeroOrMoreTimes();
+        $telegram->shouldReceive('editMessageText')
+            ->once()
+            ->ordered()
+            ->withArgs(function (string $token, string $chatId, int $messageId, string $text, array $payload): bool {
+                return $token === 'BOT_TOKEN'
+                    && $chatId === '2002'
+                    && $messageId === 101
+                    && (strpos($text, 'Welcome to NewZoe Shop') !== false
+                        || strpos($text, 'Language changed to: English') !== false)
+                    && strpos($text, '欢迎来到 NewZoe 商城') === false;
+            });
+        $telegram->shouldReceive('editMessageText')
+            ->once()
+            ->ordered()
+            ->withArgs(function (string $token, string $chatId, int $messageId, string $text, array $payload): bool {
+                $keyboard = $payload['reply_markup']['inline_keyboard'] ?? [];
+                $productButton = $keyboard[0][0] ?? [];
+
+                return $token === 'BOT_TOKEN'
+                    && $chatId === '2002'
+                    && $messageId === 102
+                    && preg_match('/Products|product list/i', $text) === 1
+                    && strpos($text, '商品列表') === false
+                    && strpos((string) ($productButton['text'] ?? ''), '云服务套餐') !== false
+                    && strpos((string) ($productButton['text'] ?? ''), '9.90') !== false
+                    && ($productButton['callback_data'] ?? '') === 'shop:product:42';
+            });
+
+        $service = new TelegramShopBotService($api, $telegram);
+        $service->handleCallback([
+            'data' => 'shop:lang:en',
+            'message' => [
+                'message_id' => 101,
+                'chat' => ['id' => 2002, 'type' => 'private'],
+            ],
+        ]);
+        $service->handleCallback([
+            'data' => 'shop:products:0',
+            'message' => [
+                'message_id' => 102,
+                'chat' => ['id' => 2002, 'type' => 'private'],
+            ],
+        ]);
+    }
+
+    public function test_language_selection_callback_renders_all_three_supported_languages(): void
+    {
+        $api = Mockery::mock(ShopApiClient::class);
+        $telegram = Mockery::mock(TelegramBotClient::class);
+        $telegram->shouldReceive('editMessageText')
+            ->once()
+            ->withArgs(function (string $token, string $chatId, int $messageId, string $text, array $payload): bool {
+                $keyboard = $payload['reply_markup']['inline_keyboard'] ?? [];
+                $buttons = [];
+                foreach ($keyboard as $row) {
+                    $buttons = array_merge($buttons, (array) $row);
+                }
+                $callbacks = array_column($buttons, 'callback_data');
+                $labels = implode("\n", array_column($buttons, 'text'));
+
+                return $token === 'BOT_TOKEN'
+                    && $chatId === '2003'
+                    && $messageId === 103
+                    && (bool) preg_match('/language|语言|ngôn ngữ/i', $text)
+                    && in_array('shop:lang:zh', $callbacks, true)
+                    && in_array('shop:lang:en', $callbacks, true)
+                    && in_array('shop:lang:vi', $callbacks, true)
+                    && strpos($labels, '中文') !== false
+                    && strpos($labels, 'English') !== false
+                    && strpos($labels, 'Tiếng Việt') !== false;
+            });
+
+        (new TelegramShopBotService($api, $telegram))->handleCallback([
+            'data' => 'shop:languages',
+            'message' => [
+                'message_id' => 103,
+                'chat' => ['id' => 2003, 'type' => 'private'],
             ],
         ]);
     }

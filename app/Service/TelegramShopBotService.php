@@ -13,6 +13,8 @@ class TelegramShopBotService
 {
     private const SESSION_MINUTES = 30;
     private const ORDER_MINUTES = 2880;
+    private const LANGUAGE_TTL_DAYS = 30;
+    private const DEFAULT_LANGUAGE = 'zh';
 
     private $api;
     private $telegram;
@@ -42,6 +44,8 @@ class TelegramShopBotService
             return;
         }
 
+        $this->language($chatId, $message['from']['language_code'] ?? null);
+
         $text = trim((string) ($message['text'] ?? ''));
         if ($text === '') {
             return;
@@ -61,13 +65,13 @@ class TelegramShopBotService
         }
         if (preg_match('/^\/cancel(?:@[A-Za-z0-9_]+)?$/i', $text)) {
             Cache::forget($this->sessionKey($chatId));
-            $this->send($chatId, '当前下单流程已取消。', $this->homeKeyboard());
+            $this->send($chatId, $this->t($chatId, 'cancelled'), $this->homeKeyboard($chatId));
             return;
         }
 
         $state = $this->getState($chatId);
         if (!$state) {
-            $this->send($chatId, '请选择一个操作：', $this->homeKeyboard());
+            $this->send($chatId, $this->t($chatId, 'choose_action'), $this->homeKeyboard($chatId));
             return;
         }
 
@@ -83,11 +87,11 @@ class TelegramShopBotService
                     $this->acceptInput($chatId, $text, $state);
                     return;
                 default:
-                    $this->send($chatId, '请使用下方按钮继续，或发送 /cancel 取消。', $this->homeKeyboard());
+                    $this->send($chatId, $this->t($chatId, 'continue_hint'), $this->homeKeyboard($chatId));
             }
         } catch (Throwable $exception) {
             $this->reportApiFailure($exception);
-            $this->send($chatId, '这次操作没有完成，请稍后重试。', $this->homeKeyboard());
+            $this->send($chatId, $this->t($chatId, 'generic_error'), $this->homeKeyboard($chatId));
         }
     }
 
@@ -99,6 +103,8 @@ class TelegramShopBotService
         if ($chatId === null) {
             return;
         }
+
+        $this->language($chatId, $query['from']['language_code'] ?? null);
 
         $data = trim((string) ($query['data'] ?? ''));
         $origin = $query['message'] ?? [];
@@ -114,10 +120,16 @@ class TelegramShopBotService
 
             switch ($parts[1] ?? '') {
                 case 'home':
-                    $this->respond($chatId, '请选择一个操作：', $this->homeKeyboard(), $origin);
+                    $this->respond($chatId, $this->t($chatId, 'choose_action'), $this->homeKeyboard($chatId), $origin);
                     return;
                 case 'help':
-                    $this->respond($chatId, $this->helpText(), $this->homeKeyboard(), $origin);
+                    $this->respond($chatId, $this->helpText($chatId), $this->homeKeyboard($chatId), $origin);
+                    return;
+                case 'languages':
+                    $this->showLanguages($chatId, $origin);
+                    return;
+                case 'lang':
+                    $this->selectLanguage($chatId, (string) ($parts[2] ?? ''), $origin);
                     return;
                 case 'products':
                     $this->showProducts($chatId, max(0, (int) ($parts[2] ?? 0)), $origin);
@@ -150,12 +162,12 @@ class TelegramShopBotService
                     return;
                 case 'cancel':
                     Cache::forget($this->sessionKey($chatId));
-                    $this->respond($chatId, '当前下单流程已取消。', $this->homeKeyboard(), $origin);
+                    $this->respond($chatId, $this->t($chatId, 'cancelled'), $this->homeKeyboard($chatId), $origin);
                     return;
             }
         } catch (Throwable $exception) {
             $this->reportApiFailure($exception);
-            $this->respond($chatId, '这次操作没有完成，请稍后重试。', $this->homeKeyboard(), $origin);
+            $this->respond($chatId, $this->t($chatId, 'generic_error'), $this->homeKeyboard($chatId), $origin);
         }
     }
 
@@ -163,8 +175,8 @@ class TelegramShopBotService
     {
         $this->send(
             $chatId,
-            "欢迎来到 NewZoe 商城\n\n可以直接浏览商品、创建订单并跳转支付。",
-            $this->homeKeyboard()
+            $this->t($chatId, 'home_text'),
+            $this->homeKeyboard($chatId)
         );
     }
 
@@ -177,20 +189,20 @@ class TelegramShopBotService
         $page = min($page, $pages - 1);
         $slice = array_slice($products, $page * $pageSize, $pageSize);
 
-        $text = "商品列表\n\n";
+        $text = $this->t($chatId, 'products_title');
         if (!$slice) {
-            $text .= "当前没有可售商品。";
+            $text .= $this->t($chatId, 'no_products');
         } else {
-            $text .= "点击商品查看详情：";
+            $text .= $this->t($chatId, 'products_hint');
         }
 
         $keyboard = [];
         foreach ($slice as $product) {
             $stock = (int) ($product['stock'] ?? 0);
-            $label = '🛒 '.$this->shortText((string) ($product['name'] ?? '商品'), 28)
+            $label = '🛒 '.$this->shortText((string) ($product['name'] ?? $this->t($chatId, 'product_default')), 28)
                 .' · ¥'.number_format((float) ($product['price'] ?? 0), 2);
             if ($stock < 1) {
-                $label .= ' · 缺货';
+                $label .= ' · '.$this->t($chatId, 'out_of_stock');
             }
             $keyboard[] = [[
                 'text' => $label,
@@ -200,17 +212,17 @@ class TelegramShopBotService
 
         $pager = [];
         if ($page > 0) {
-            $pager[] = ['text' => '‹ 上一页', 'callback_data' => 'shop:products:'.($page - 1)];
+            $pager[] = ['text' => $this->t($chatId, 'previous'), 'callback_data' => 'shop:products:'.($page - 1)];
         }
         if ($page < $pages - 1) {
-            $pager[] = ['text' => '下一页 ›', 'callback_data' => 'shop:products:'.($page + 1)];
+            $pager[] = ['text' => $this->t($chatId, 'next'), 'callback_data' => 'shop:products:'.($page + 1)];
         }
         if ($pager) {
             $keyboard[] = $pager;
         }
         $keyboard[] = [
-            ['text' => '📦 我的订单', 'callback_data' => 'shop:orders'],
-            ['text' => '返回首页', 'callback_data' => 'shop:home'],
+            ['text' => $this->t($chatId, 'my_orders'), 'callback_data' => 'shop:orders'],
+            ['text' => $this->t($chatId, 'home'), 'callback_data' => 'shop:home'],
         ];
 
         $this->respond($chatId, $text, ['inline_keyboard' => $keyboard], $origin);
@@ -220,22 +232,22 @@ class TelegramShopBotService
     {
         $product = $this->product($productId);
         if (!$product) {
-            $this->respond($chatId, '商品不存在或已经下架。', $this->homeKeyboard(), $origin);
+            $this->respond($chatId, $this->t($chatId, 'product_missing'), $this->homeKeyboard($chatId), $origin);
             return;
         }
 
         $stock = (int) ($product['stock'] ?? 0);
-        $text = (string) ($product['name'] ?? '商品')."\n\n"
-            .'价格：¥'.number_format((float) ($product['price'] ?? 0), 2)."\n"
-            .'库存：'.($stock > 0 ? $stock : '缺货')."\n";
+        $text = (string) ($product['name'] ?? $this->t($chatId, 'product_default'))."\n\n"
+            .$this->t($chatId, 'price', ['amount' => number_format((float) ($product['price'] ?? 0), 2)])."\n"
+            .$this->t($chatId, 'stock', ['stock' => $stock > 0 ? (string) $stock : $this->t($chatId, 'out_of_stock')])."\n";
         if (!empty($product['description'])) {
             $description = trim(strip_tags((string) $product['description']));
             $text .= "\n".$this->shortText($description, 2600)."\n";
         }
         if (!empty($product['input_fields'])) {
-            $text .= "\n下单时还需要填写：";
+            $text .= "\n".$this->t($chatId, 'fields_intro');
             foreach ($product['input_fields'] as $field) {
-                $text .= "\n· ".(string) ($field['label'] ?? $field['field'] ?? '信息');
+                $text .= "\n· ".(string) ($field['label'] ?? $field['field'] ?? $this->t($chatId, 'field_default'));
             }
             $text .= "\n";
         }
@@ -249,14 +261,14 @@ class TelegramShopBotService
             $quantities = $limit <= 10 ? range(1, $limit) : [1, 2, 5, 10];
             foreach ($quantities as $quantity) {
                 $keyboard[] = [[
-                    'text' => '购买 '.$quantity.' 件',
+                    'text' => $this->t($chatId, 'buy_quantity', ['quantity' => $quantity]),
                     'callback_data' => 'shop:qty:'.$productId.':'.$quantity,
                 ]];
             }
         }
         $keyboard[] = [
-            ['text' => '‹ 返回商品列表', 'callback_data' => 'shop:products:0'],
-            ['text' => '返回首页', 'callback_data' => 'shop:home'],
+            ['text' => $this->t($chatId, 'back_products'), 'callback_data' => 'shop:products:0'],
+            ['text' => $this->t($chatId, 'home'), 'callback_data' => 'shop:home'],
         ];
         $this->respond($chatId, $text, ['inline_keyboard' => $keyboard], $origin);
     }
@@ -269,14 +281,14 @@ class TelegramShopBotService
     ): void {
         $product = $this->product($productId);
         if (!$product) {
-            $this->respond($chatId, '商品不存在或已经下架，请重新选择商品。', $this->homeKeyboard(), $origin);
+            $this->respond($chatId, $this->t($chatId, 'product_missing_retry'), $this->homeKeyboard($chatId), $origin);
             return;
         }
         $stock = (int) ($product['stock'] ?? 0);
         $limit = (int) ($product['max_quantity'] ?? 0);
         $limit = $limit > 0 ? min($limit, $stock) : $stock;
         if ($quantity < 1 || $quantity > $limit) {
-            $this->respond($chatId, '购买数量已经变化，请重新选择商品。', $this->homeKeyboard(), $origin);
+            $this->respond($chatId, $this->t($chatId, 'quantity_changed'), $this->homeKeyboard($chatId), $origin);
             return;
         }
 
@@ -289,9 +301,12 @@ class TelegramShopBotService
         ]);
         $this->respond(
             $chatId,
-            '已选择：'.(string) $product['name']." × ".$quantity."\n\n请输入接收商品的邮箱：",
+            $this->t($chatId, 'selected_email', [
+                'product' => (string) $product['name'],
+                'quantity' => $quantity,
+            ]),
             ['inline_keyboard' => [[
-                ['text' => '取消下单', 'callback_data' => 'shop:cancel'],
+                ['text' => $this->t($chatId, 'cancel_order'), 'callback_data' => 'shop:cancel'],
             ]]],
             $origin
         );
@@ -301,7 +316,7 @@ class TelegramShopBotService
     {
         $email = strtolower(trim($text));
         if (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 200) {
-            $this->send($chatId, '邮箱格式不正确，请重新输入：', $this->cancelKeyboard());
+            $this->send($chatId, $this->t($chatId, 'email_invalid'), $this->cancelKeyboard($chatId));
             return;
         }
         $state['email'] = $email;
@@ -309,8 +324,8 @@ class TelegramShopBotService
         $this->putState($chatId, $state);
         $this->send(
             $chatId,
-            "邮箱已记录。\n\n请输入查单密码；发送 - 可由系统自动生成一个随机密码：",
-            $this->passwordKeyboard()
+            $this->t($chatId, 'email_recorded'),
+            $this->passwordKeyboard($chatId)
         );
     }
 
@@ -318,7 +333,7 @@ class TelegramShopBotService
     {
         $state = $this->getState($chatId);
         if (!$state || ($state['step'] ?? '') !== 'password') {
-            $this->respond($chatId, '当前没有等待查单密码的订单。', $this->homeKeyboard(), $origin);
+            $this->respond($chatId, $this->t($chatId, 'password_wait_missing'), $this->homeKeyboard($chatId), $origin);
             return;
         }
         $state['search_password'] = $choice === 'auto' ? Str::random(12) : '';
@@ -332,7 +347,7 @@ class TelegramShopBotService
             $password = Str::random(12);
         }
         if (strlen($password) > 200) {
-            $this->send($chatId, '查单密码过长，请重新输入：', $this->passwordKeyboard());
+            $this->send($chatId, $this->t($chatId, 'password_too_long'), $this->passwordKeyboard($chatId));
             return;
         }
         $state['search_password'] = $password;
@@ -366,10 +381,10 @@ class TelegramShopBotService
             return;
         }
 
-        $label = (string) ($field['label'] ?? $field['field'] ?? '商品信息');
+        $label = (string) ($field['label'] ?? $field['field'] ?? $this->t($chatId, 'field_default'));
         $required = !empty($field['required']);
-        $text = '请输入'.$label.($required ? '（必填）' : '（可发送 - 跳过）').'：';
-        $this->respond($chatId, $text, $this->cancelKeyboard(), $origin);
+        $text = $this->t($chatId, $required ? 'input_required' : 'input_optional', ['label' => $label]);
+        $this->respond($chatId, $text, $this->cancelKeyboard($chatId), $origin);
     }
 
     private function acceptInput(string $chatId, string $text, array $state): void
@@ -386,7 +401,7 @@ class TelegramShopBotService
 
         $value = trim($text);
         if ($value === '-' && !empty($field['required'])) {
-            $this->send($chatId, '这一项是必填的，请重新输入：', $this->cancelKeyboard());
+            $this->send($chatId, $this->t($chatId, 'input_required_error'), $this->cancelKeyboard($chatId));
             return;
         }
         $state['inputs'][(string) $field['field']] = $value === '-' ? '' : $value;
@@ -399,18 +414,18 @@ class TelegramShopBotService
     {
         $state = $this->getState($chatId);
         if (!$state || ($state['step'] ?? '') !== 'payment') {
-            $this->respond($chatId, '当前没有等待支付方式的订单。', $this->homeKeyboard(), $origin);
+            $this->respond($chatId, $this->t($chatId, 'payment_wait_missing'), $this->homeKeyboard($chatId), $origin);
             return;
         }
 
         $data = $this->api->paymentMethods();
         $methods = array_values($data['payment_methods'] ?? []);
         if (!$methods) {
-            $this->respond($chatId, '当前没有可用支付方式，请稍后再试。', $this->homeKeyboard(), $origin);
+            $this->respond($chatId, $this->t($chatId, 'no_payment_methods'), $this->homeKeyboard($chatId), $origin);
             return;
         }
 
-        $text = "信息已填写完成\n\n请选择支付方式：";
+        $text = $this->t($chatId, 'payment_select');
         $keyboard = [];
         foreach ($methods as $method) {
             $code = (string) ($method['code'] ?? '');
@@ -418,15 +433,19 @@ class TelegramShopBotService
                 continue;
             }
             $keyboard[] = [[
-                'text' => '💳 '.(string) ($method['name'] ?? $code),
+                'text' => '💳 '.$this->paymentMethodLabel(
+                    $chatId,
+                    $code,
+                    (string) ($method['name'] ?? $code)
+                ),
                 'callback_data' => 'shop:method:'.$code,
             ]];
         }
         if (!$keyboard) {
-            $this->respond($chatId, '当前没有可用支付方式，请稍后再试。', $this->homeKeyboard(), $origin);
+            $this->respond($chatId, $this->t($chatId, 'no_payment_methods'), $this->homeKeyboard($chatId), $origin);
             return;
         }
-        $keyboard[] = [['text' => '取消下单', 'callback_data' => 'shop:cancel']];
+        $keyboard[] = [['text' => $this->t($chatId, 'cancel_order'), 'callback_data' => 'shop:cancel']];
         $this->respond($chatId, $text, ['inline_keyboard' => $keyboard], $origin);
     }
 
@@ -437,7 +456,7 @@ class TelegramShopBotService
         }
         $state = $this->getState($chatId);
         if (!$state || ($state['step'] ?? '') !== 'payment') {
-            $this->respond($chatId, '当前下单流程已经过期，请重新开始。', $this->homeKeyboard(), $origin);
+            $this->respond($chatId, $this->t($chatId, 'session_expired'), $this->homeKeyboard($chatId), $origin);
             return;
         }
 
@@ -464,23 +483,23 @@ class TelegramShopBotService
         $payment = (array) ($result['payment'] ?? []);
         $orderSN = trim((string) ($order['id'] ?? ''));
         if ($orderSN === '') {
-            throw new RuntimeException('订单号缺失。');
+            throw new RuntimeException($this->t($chatId, 'order_id_missing'));
         }
 
         $this->rememberOrder($chatId, $orderSN);
         Cache::forget($this->sessionKey($chatId));
-        $text = "订单已创建\n\n"
-            .'商品：'.(string) ($state['product']['name'] ?? '商品')."\n"
-            .'数量：'.(int) ($state['quantity'] ?? 1)."\n"
-            .'金额：¥'.(string) ($order['amount'] ?? '0.00')."\n"
-            .'订单号：'.$orderSN."\n";
+        $text = $this->t($chatId, 'order_created')."\n\n"
+            .$this->t($chatId, 'product_label').' '.(string) ($state['product']['name'] ?? $this->t($chatId, 'product_default'))."\n"
+            .$this->t($chatId, 'quantity_label').' '.(int) ($state['quantity'] ?? 1)."\n"
+            .$this->t($chatId, 'amount_label').' ¥'.(string) ($order['amount'] ?? '0.00')."\n"
+            .$this->t($chatId, 'order_number_label').' '.$orderSN."\n";
         if (!empty($state['search_password'])) {
-            $text .= '查单密码：'.$state['search_password']."\n";
+            $text .= $this->t($chatId, 'lookup_password_label').' '.$state['search_password']."\n";
         }
         if (empty($order['expires_at'])) {
-            $text .= "\n请在支付页面显示的截止时间前完成支付。";
+            $text .= "\n".$this->t($chatId, 'deadline_generic');
         } else {
-            $text .= "\n请在 ".$order['expires_at'].' 前完成支付。';
+            $text .= "\n".$this->t($chatId, 'deadline', ['deadline' => $order['expires_at']]);
         }
 
         if ($this->isBinancePayment($method)) {
@@ -500,7 +519,7 @@ class TelegramShopBotService
             }
         }
 
-        $keyboard = $this->orderKeyboard($orderSN, $payment);
+        $keyboard = $this->orderKeyboard($chatId, $orderSN, $payment);
         $this->respond($chatId, $text, ['inline_keyboard' => $keyboard], $origin);
     }
 
@@ -508,39 +527,39 @@ class TelegramShopBotService
     {
         $orders = $this->ownedOrders($chatId);
         if (!$orders) {
-            $this->respond($chatId, '这里还没有通过机器人创建的订单。', $this->homeKeyboard(), $origin);
+            $this->respond($chatId, $this->t($chatId, 'no_orders'), $this->homeKeyboard($chatId), $origin);
             return;
         }
 
-        $text = "我的订单\n\n点击订单查看最新状态：";
+        $text = $this->t($chatId, 'orders_title');
         $keyboard = [];
         foreach ($orders as $orderSN) {
             $keyboard[] = [[
-                'text' => '订单 '.$orderSN,
+                'text' => $this->t($chatId, 'order_button', ['order' => $orderSN]),
                 'callback_data' => 'shop:order:'.$orderSN,
             ]];
         }
-        $keyboard[] = [['text' => '🛍️ 继续购物', 'callback_data' => 'shop:products:0']];
+        $keyboard[] = [['text' => $this->t($chatId, 'continue_shopping'), 'callback_data' => 'shop:products:0']];
         $this->respond($chatId, $text, ['inline_keyboard' => $keyboard], $origin);
     }
 
     private function showOrder(string $chatId, string $orderSN, array $origin = []): void
     {
         if (!$this->ownsOrder($chatId, $orderSN)) {
-            $this->respond($chatId, '这个订单不属于当前聊天，或订单记录已经过期。', $this->homeKeyboard(), $origin);
+            $this->respond($chatId, $this->t($chatId, 'wrong_order'), $this->homeKeyboard($chatId), $origin);
             return;
         }
 
         $data = $this->api->order($orderSN);
         $order = (array) ($data['order'] ?? []);
         $status = (string) ($order['status'] ?? 'unknown');
-        $text = '订单 '.$orderSN."\n\n"
-            .'状态：'.$this->statusLabel($status)."\n"
-            .'金额：¥'.(string) ($order['amount'] ?? '0.00')."\n"
-            .'数量：'.(int) ($order['quantity'] ?? 0)."\n"
-            .'商品：'.(string) (($order['product']['name'] ?? '') ?: '商品')."\n";
+        $text = $this->t($chatId, 'order_button', ['order' => $orderSN])."\n\n"
+            .$this->t($chatId, 'status_label').' '.$this->statusLabel($status, $chatId)."\n"
+            .$this->t($chatId, 'amount_label').' ¥'.(string) ($order['amount'] ?? '0.00')."\n"
+            .$this->t($chatId, 'quantity_label').' '.(int) ($order['quantity'] ?? 0)."\n"
+            .$this->t($chatId, 'product_label').' '.(string) (($order['product']['name'] ?? '') ?: $this->t($chatId, 'product_default'))."\n";
         if (!empty($order['expires_at'])) {
-            $text .= '支付截止：'.(string) $order['expires_at']."\n";
+            $text .= $this->t($chatId, 'deadline_label').' '.(string) $order['expires_at']."\n";
         }
 
         $binancePayment = null;
@@ -564,7 +583,7 @@ class TelegramShopBotService
                 } else {
                     if (!empty($payment['url'])) {
                         $keyboard[] = [[
-                            'text' => '🚀 前往支付',
+                            'text' => $this->t($chatId, 'go_pay'),
                             'url' => (string) $payment['url'],
                         ]];
                     }
@@ -575,13 +594,13 @@ class TelegramShopBotService
         }
         if ($status === 'completed') {
             $keyboard[] = [[
-                'text' => '📦 查看卡密',
+                'text' => $this->t($chatId, 'view_delivery'),
                 'callback_data' => 'shop:delivery:'.$orderSN,
             ]];
         }
         $keyboard[] = [
-            ['text' => '🔄 刷新', 'callback_data' => 'shop:order:'.$orderSN],
-            ['text' => '🛍️ 购物', 'callback_data' => 'shop:products:0'],
+            ['text' => $this->t($chatId, 'refresh'), 'callback_data' => 'shop:order:'.$orderSN],
+            ['text' => $this->t($chatId, 'shopping'), 'callback_data' => 'shop:products:0'],
         ];
         if ($binancePayment !== null
             && !empty($binancePayment['qr_payload'])
@@ -598,20 +617,20 @@ class TelegramShopBotService
         return strtolower(trim($method)) === 'binancepay';
     }
 
-    private function orderKeyboard(string $orderSN, array $payment = []): array
+    private function orderKeyboard(string $chatId, string $orderSN, array $payment = []): array
     {
         $keyboard = [];
         if (!$this->isBinancePayment((string) ($payment['method'] ?? ''))
             && !empty($payment['url'])
         ) {
             $keyboard[] = [[
-                'text' => '🚀 前往支付',
+                'text' => $this->t($chatId, 'go_pay'),
                 'url' => (string) $payment['url'],
             ]];
         }
         $keyboard[] = [
-            ['text' => '🔄 刷新状态', 'callback_data' => 'shop:order:'.$orderSN],
-            ['text' => '📦 我的订单', 'callback_data' => 'shop:orders'],
+            ['text' => $this->t($chatId, 'refresh_status'), 'callback_data' => 'shop:order:'.$orderSN],
+            ['text' => $this->t($chatId, 'my_orders'), 'callback_data' => 'shop:orders'],
         ];
 
         return $keyboard;
@@ -627,17 +646,20 @@ class TelegramShopBotService
         $qrPayload = trim((string) ($payment['qr_payload'] ?? ''));
         $expected = trim((string) ($payment['expected_usdt'] ?? ''));
         if ($qrPayload === '' || $expected === '') {
-            throw new RuntimeException('币安支付二维码或应付金额缺失。');
+            throw new RuntimeException($this->t($chatId, 'qr_missing'));
         }
 
         $currency = strtoupper(trim((string) ($payment['currency'] ?? 'USDT')));
         $caption = $orderText
-            ."\n\n支付方式：币安支付\n"
-            .'应付：'.$expected.' '.$currency."\n";
+            ."\n\n".$this->t($chatId, 'binance_method')."\n"
+            .$this->t($chatId, 'amount_due', [
+                'amount' => $expected,
+                'currency' => $currency,
+            ])."\n";
         if (!empty($payment['quote_expires_at'])) {
-            $caption .= '报价有效至：'.(string) $payment['quote_expires_at']."\n";
+            $caption .= $this->t($chatId, 'quote_expiry').' '.(string) $payment['quote_expires_at']."\n";
         }
-        $caption .= "\n请使用币安 App 扫描下方二维码，支付准确金额。";
+        $caption .= "\n".$this->t($chatId, 'binance_instruction');
         // Telegram limits photo captions to 1024 characters. Bound only the
         // untrusted order summary so amount, expiry, and payment instructions
         // remain visible even when a product name is unusually long.
@@ -647,7 +669,7 @@ class TelegramShopBotService
         $summaryLimit = max(0, 1024 - mb_strlen($fixedCaption, 'UTF-8'));
         $summary = mb_substr($orderText, 0, $summaryLimit, 'UTF-8');
         $caption = $summary.$fixedCaption;
-        $keyboard = ['reply_markup' => ['inline_keyboard' => $this->orderKeyboard($orderSN, $payment)]];
+        $keyboard = ['reply_markup' => ['inline_keyboard' => $this->orderKeyboard($chatId, $orderSN, $payment)]];
 
         // A callback message cannot be converted into a photo with
         // editMessageText. Update it when possible, then send the QR as the
@@ -658,7 +680,7 @@ class TelegramShopBotService
                     $this->token(),
                     $chatId,
                     (int) $origin['message_id'],
-                    $orderText."\n\n币安二维码已发送，请扫描下一条消息。",
+                    $orderText."\n\n".$this->t($chatId, 'qr_sent'),
                     $keyboard
                 );
             } catch (Throwable $exception) {
@@ -683,7 +705,7 @@ class TelegramShopBotService
     private function showDelivery(string $chatId, string $orderSN, array $origin = []): void
     {
         if (!$this->ownsOrder($chatId, $orderSN)) {
-            $this->respond($chatId, '这个订单不属于当前聊天。', $this->homeKeyboard(), $origin);
+            $this->respond($chatId, $this->t($chatId, 'wrong_order_short'), $this->homeKeyboard($chatId), $origin);
             return;
         }
 
@@ -692,9 +714,11 @@ class TelegramShopBotService
         if (empty($delivery['available'])) {
             $this->respond(
                 $chatId,
-                '订单当前还不能发货，状态：'.$this->statusLabel((string) ($delivery['status'] ?? 'unknown')),
+                $this->t($chatId, 'delivery_unavailable', [
+                    'status' => $this->statusLabel((string) ($delivery['status'] ?? 'unknown'), $chatId),
+                ]),
                 ['inline_keyboard' => [[[
-                    'text' => '🔄 刷新订单',
+                    'text' => $this->t($chatId, 'refresh_order'),
                     'callback_data' => 'shop:order:'.$orderSN,
                 ]]]],
                 $origin
@@ -703,9 +727,11 @@ class TelegramShopBotService
         }
 
         $content = trim((string) ($delivery['content'] ?? ''));
-        $parts = $this->splitText("订单 ".$orderSN." 发货内容：\n\n".$content);
+        $parts = $this->splitText(
+            $this->t($chatId, 'delivery_heading', ['order' => $orderSN])."\n\n".$content
+        );
         foreach ($parts as $index => $part) {
-            $keyboard = $index === count($parts) - 1 ? $this->homeKeyboard() : [];
+            $keyboard = $index === count($parts) - 1 ? $this->homeKeyboard($chatId) : [];
             if ($index === 0 && $origin && isset($origin['message_id']) && count($parts) === 1) {
                 $this->respond($chatId, $part, $keyboard, $origin);
             } else {
@@ -829,53 +855,469 @@ class TelegramShopBotService
         return $token;
     }
 
-    private function homeKeyboard(): array
+    private function homeKeyboard(string $chatId): array
     {
         return ['inline_keyboard' => [
             [
-                ['text' => '🛍️ 浏览商品', 'callback_data' => 'shop:products:0'],
-                ['text' => '📦 我的订单', 'callback_data' => 'shop:orders'],
+                ['text' => $this->t($chatId, 'browse_products'), 'callback_data' => 'shop:products:0'],
+                ['text' => $this->t($chatId, 'my_orders'), 'callback_data' => 'shop:orders'],
             ],
-            [['text' => 'ℹ️ 使用说明', 'callback_data' => 'shop:help']],
+            [['text' => $this->t($chatId, 'help_button'), 'callback_data' => 'shop:help']],
+            [['text' => $this->t($chatId, 'language_button'), 'callback_data' => 'shop:languages']],
         ]];
     }
 
-    private function cancelKeyboard(): array
+    private function cancelKeyboard(string $chatId): array
     {
         return ['inline_keyboard' => [
-            [['text' => '取消下单', 'callback_data' => 'shop:cancel']],
+            [['text' => $this->t($chatId, 'cancel_order'), 'callback_data' => 'shop:cancel']],
         ]];
     }
 
-    private function passwordKeyboard(): array
+    private function passwordKeyboard(string $chatId): array
     {
         return ['inline_keyboard' => [
-            [['text' => '🔐 自动生成查单密码', 'callback_data' => 'shop:pwd:auto']],
-            [['text' => '取消下单', 'callback_data' => 'shop:cancel']],
+            [['text' => $this->t($chatId, 'auto_password'), 'callback_data' => 'shop:pwd:auto']],
+            [['text' => $this->t($chatId, 'cancel_order'), 'callback_data' => 'shop:cancel']],
         ]];
     }
 
-    private function helpText(): string
+    private function helpText(string $chatId): string
     {
-        return "使用说明\n\n"
-            ."1. 浏览商品并选择购买数量\n"
-            ."2. 按提示填写邮箱和查单密码\n"
-            ."3. 选择支付方式，点击支付按钮完成付款\n"
-            ."4. 在“我的订单”里刷新状态，支付完成后查看发货内容\n\n"
-            ."订单有效期以订单页面显示为准。机器人只在私聊中处理订单和发货内容。";
+        return $this->t($chatId, 'help_text');
     }
 
-    private function statusLabel(string $status): string
+    private function statusLabel(string $status, string $chatId = ''): string
+    {
+        $status = strtolower(trim($status));
+        if (!in_array($status, [
+            'wait_pay',
+            'pending',
+            'processing',
+            'completed',
+            'failure',
+            'expired',
+            'abnormal',
+        ], true)) {
+            $status = 'unknown';
+        }
+        return $this->t($chatId, 'status_'.$status);
+    }
+
+    private function paymentMethodLabel(string $chatId, string $code, string $name): string
+    {
+        $normalized = strtolower(trim($code));
+        if (strpos($normalized, 'binance') !== false) {
+            return $this->t($chatId, 'method_binance');
+        }
+        if (strpos($normalized, 'wechat') !== false
+            || strpos($normalized, 'weixin') !== false
+            || strpos($normalized, 'wxpay') !== false
+        ) {
+            return $this->t($chatId, 'method_wechat');
+        }
+        if (strpos($normalized, 'alipay') !== false
+            || strpos($normalized, 'aliweb') !== false
+            || strpos($normalized, 'zfb') !== false
+        ) {
+            return $this->t($chatId, 'method_alipay');
+        }
+        if (strpos($normalized, 'usdt') !== false
+            || strpos($normalized, 'epusdt') !== false
+        ) {
+            return $this->t($chatId, 'method_usdt');
+        }
+
+        return $name !== '' ? $name : $this->t($chatId, 'payment_method_default', ['code' => $code]);
+    }
+
+    private function showLanguages(string $chatId, array $origin = []): void
+    {
+        $this->respond(
+            $chatId,
+            $this->t($chatId, 'language_title'),
+            ['inline_keyboard' => $this->languageKeyboard($chatId)],
+            $origin
+        );
+    }
+
+    private function selectLanguage(string $chatId, string $language, array $origin = []): void
+    {
+        $language = strtolower(trim($language));
+        if (!in_array($language, $this->supportedLanguages(), true)) {
+            $this->showLanguages($chatId, $origin);
+            return;
+        }
+
+        $this->setLanguage($chatId, $language);
+        $this->respond(
+            $chatId,
+            $this->t($chatId, 'language_changed', [
+                'language' => $this->languageName($language),
+            ])."\n\n".$this->t($chatId, 'home_text'),
+            $this->homeKeyboard($chatId),
+            $origin
+        );
+    }
+
+    private function languageKeyboard(string $chatId): array
+    {
+        $current = $this->language($chatId);
+        $languages = [];
+        foreach ($this->supportedLanguages() as $language) {
+            $prefix = $language === $current ? '✓ ' : '';
+            $languages[] = [[
+                'text' => $prefix.$this->languageName($language),
+                'callback_data' => 'shop:lang:'.$language,
+            ]];
+        }
+        $languages[] = [[
+            'text' => $this->t($chatId, 'home'),
+            'callback_data' => 'shop:home',
+        ]];
+        return $languages;
+    }
+
+    private function languageName(string $language): string
     {
         return [
-            'wait_pay' => '待支付',
-            'pending' => '待处理',
-            'processing' => '处理中',
-            'completed' => '已完成',
-            'failure' => '处理失败',
-            'expired' => '已过期',
-            'abnormal' => '异常',
-        ][$status] ?? '未知';
+            'zh' => '中文',
+            'en' => 'English',
+            'vi' => 'Tiếng Việt',
+        ][$language] ?? '中文';
+    }
+
+    private function supportedLanguages(): array
+    {
+        return ['zh', 'en', 'vi'];
+    }
+
+    private function language(string $chatId, ?string $hint = null): string
+    {
+        $stored = strtolower(trim((string) Cache::get($this->languageKey($chatId), '')));
+        if (in_array($stored, $this->supportedLanguages(), true)) {
+            return $stored;
+        }
+
+        $hint = strtolower(trim((string) $hint));
+        if (strpos($hint, 'en') === 0) {
+            $stored = 'en';
+        } elseif (strpos($hint, 'vi') === 0) {
+            $stored = 'vi';
+        } elseif (strpos($hint, 'zh') === 0) {
+            $stored = 'zh';
+        } else {
+            $stored = self::DEFAULT_LANGUAGE;
+        }
+        $this->setLanguage($chatId, $stored);
+        return $stored;
+    }
+
+    private function setLanguage(string $chatId, string $language): void
+    {
+        Cache::put(
+            $this->languageKey($chatId),
+            $language,
+            now()->addDays(self::LANGUAGE_TTL_DAYS)
+        );
+    }
+
+    private function languageKey(string $chatId): string
+    {
+        return 'telegram-shop:language:'.$chatId;
+    }
+
+    private function t(string $chatId, string $key, array $replace = []): string
+    {
+        $language = $this->language($chatId);
+        $catalog = $this->translations();
+        $text = $catalog[$language][$key]
+            ?? $catalog[self::DEFAULT_LANGUAGE][$key]
+            ?? $key;
+        foreach ($replace as $name => $value) {
+            $text = str_replace('{'.$name.'}', (string) $value, $text);
+        }
+        return $text;
+    }
+
+    private function translations(): array
+    {
+        static $catalog;
+        if ($catalog !== null) {
+            return $catalog;
+        }
+
+        $catalog = [
+            'zh' => [
+                'choose_action' => '请选择一个操作：',
+                'cancelled' => '当前下单流程已取消。',
+                'continue_hint' => '请使用下方按钮继续，或发送 /cancel 取消。',
+                'generic_error' => '这次操作没有完成，请稍后重试。',
+                'home_text' => "欢迎来到 NewZoe 商城\n\n可以直接浏览商品、创建订单并跳转支付。",
+                'browse_products' => '🛍️ 浏览商品',
+                'my_orders' => '📦 我的订单',
+                'help_button' => 'ℹ️ 使用说明',
+                'language_button' => '🌐 语言',
+                'language_title' => '选择语言：',
+                'language_changed' => '语言已切换为：{language}',
+                'products_title' => "商品列表\n\n",
+                'no_products' => '当前没有可售商品。',
+                'products_hint' => '点击商品查看详情：',
+                'product_default' => '商品',
+                'out_of_stock' => '缺货',
+                'previous' => '‹ 上一页',
+                'next' => '下一页 ›',
+                'home' => '返回首页',
+                'product_missing' => '商品不存在或已经下架。',
+                'product_missing_retry' => '商品不存在或已经下架，请重新选择商品。',
+                'price' => '价格：¥{amount}',
+                'stock' => '库存：{stock}',
+                'fields_intro' => '下单时还需要填写：',
+                'field_default' => '信息',
+                'buy_quantity' => '购买 {quantity} 件',
+                'back_products' => '‹ 返回商品列表',
+                'quantity_changed' => '购买数量已经变化，请重新选择商品。',
+                'selected_email' => "已选择：{product} × {quantity}\n\n请输入接收商品的邮箱：",
+                'cancel_order' => '取消下单',
+                'email_invalid' => '邮箱格式不正确，请重新输入：',
+                'email_recorded' => "邮箱已记录。\n\n请输入查单密码；发送 - 可由系统自动生成一个随机密码：",
+                'password_wait_missing' => '当前没有等待查单密码的订单。',
+                'password_too_long' => '查单密码过长，请重新输入：',
+                'auto_password' => '🔐 自动生成查单密码',
+                'input_required' => '请输入{label}（必填）：',
+                'input_optional' => '请输入{label}（可发送 - 跳过）：',
+                'input_required_error' => '这一项是必填的，请重新输入：',
+                'payment_wait_missing' => '当前没有等待支付方式的订单。',
+                'no_payment_methods' => '当前没有可用支付方式，请稍后再试。',
+                'payment_select' => "信息已填写完成\n\n请选择支付方式：",
+                'session_expired' => '当前下单流程已经过期，请重新开始。',
+                'order_id_missing' => '订单号缺失。',
+                'order_created' => '订单已创建',
+                'product_label' => '商品：',
+                'quantity_label' => '数量：',
+                'amount_label' => '金额：',
+                'order_number_label' => '订单号：',
+                'lookup_password_label' => '查单密码：',
+                'deadline_generic' => '请在支付页面显示的截止时间前完成支付。',
+                'deadline' => '请在 {deadline} 前完成支付。',
+                'no_orders' => '这里还没有通过机器人创建的订单。',
+                'orders_title' => "我的订单\n\n点击订单查看最新状态：",
+                'order_button' => '订单 {order}',
+                'continue_shopping' => '🛍️ 继续购物',
+                'wrong_order' => '这个订单不属于当前聊天，或订单记录已经过期。',
+                'status_label' => '状态：',
+                'deadline_label' => '支付截止：',
+                'go_pay' => '🚀 前往支付',
+                'view_delivery' => '📦 查看卡密',
+                'refresh' => '🔄 刷新',
+                'shopping' => '🛍️ 购物',
+                'refresh_status' => '🔄 刷新状态',
+                'qr_missing' => '币安支付二维码或应付金额缺失。',
+                'binance_method' => '支付方式：币安支付',
+                'amount_due' => '应付：{amount} {currency}',
+                'quote_expiry' => '报价有效至：',
+                'binance_instruction' => '请使用币安 App 扫描下方二维码，支付准确金额。',
+                'qr_sent' => '币安二维码已发送，请扫描下一条消息。',
+                'wrong_order_short' => '这个订单不属于当前聊天。',
+                'delivery_unavailable' => '订单当前还不能发货，状态：{status}',
+                'refresh_order' => '🔄 刷新订单',
+                'delivery_heading' => '订单 {order} 发货内容：',
+                'method_binance' => '币安支付',
+                'method_wechat' => '微信支付',
+                'method_alipay' => '支付宝',
+                'method_usdt' => 'USDT',
+                'payment_method_default' => '支付方式 {code}',
+                'help_text' => "使用说明\n\n1. 浏览商品并选择购买数量\n2. 按提示填写邮箱和查单密码\n3. 选择支付方式，点击支付按钮完成付款\n4. 在“我的订单”里刷新状态，支付完成后查看发货内容\n\n订单有效期以订单页面显示为准。机器人只在私聊中处理订单和发货内容。",
+                'status_wait_pay' => '待支付',
+                'status_pending' => '待处理',
+                'status_processing' => '处理中',
+                'status_completed' => '已完成',
+                'status_failure' => '处理失败',
+                'status_expired' => '已过期',
+                'status_abnormal' => '异常',
+                'status_unknown' => '未知',
+            ],
+            'en' => [
+                'choose_action' => 'Please choose an action:',
+                'cancelled' => 'The current order process has been cancelled.',
+                'continue_hint' => 'Use the buttons below to continue, or send /cancel to cancel.',
+                'generic_error' => 'This operation could not be completed. Please try again later.',
+                'home_text' => "Welcome to NewZoe Shop\n\nBrowse products, create orders, and continue to payment.",
+                'browse_products' => '🛍️ Browse products',
+                'my_orders' => '📦 My orders',
+                'help_button' => 'ℹ️ Help',
+                'language_button' => '🌐 Language',
+                'language_title' => 'Choose a language:',
+                'language_changed' => 'Language changed to: {language}',
+                'products_title' => "Product list\n\n",
+                'no_products' => 'There are no products available right now.',
+                'products_hint' => 'Select a product to view details:',
+                'product_default' => 'Product',
+                'out_of_stock' => 'Out of stock',
+                'previous' => '‹ Previous',
+                'next' => 'Next ›',
+                'home' => 'Back to home',
+                'product_missing' => 'This product does not exist or is no longer available.',
+                'product_missing_retry' => 'This product does not exist or is no longer available. Please choose another.',
+                'price' => 'Price: ¥{amount}',
+                'stock' => 'Stock: {stock}',
+                'fields_intro' => 'Additional information is required to place this order:',
+                'field_default' => 'Information',
+                'buy_quantity' => 'Buy {quantity} item(s)',
+                'back_products' => '‹ Back to products',
+                'quantity_changed' => 'The available quantity has changed. Please choose again.',
+                'selected_email' => "Selected: {product} × {quantity}\n\nEnter the email address for delivery:",
+                'cancel_order' => 'Cancel order',
+                'email_invalid' => 'Invalid email format. Please enter it again:',
+                'email_recorded' => "Email saved.\n\nEnter an order lookup password, or send - to generate a random password automatically:",
+                'password_wait_missing' => 'No order is currently waiting for an order lookup password.',
+                'password_too_long' => 'The order lookup password is too long. Please enter it again:',
+                'auto_password' => '🔐 Generate lookup password',
+                'input_required' => 'Enter {label} (required):',
+                'input_optional' => 'Enter {label} (send - to skip):',
+                'input_required_error' => 'This field is required. Please enter it again:',
+                'payment_wait_missing' => 'No order is currently waiting for a payment method.',
+                'no_payment_methods' => 'No payment methods are available right now. Please try again later.',
+                'payment_select' => "Your information is complete.\n\nChoose a payment method:",
+                'session_expired' => 'This order session has expired. Please start again.',
+                'order_id_missing' => 'Order number is missing.',
+                'order_created' => 'Order created',
+                'product_label' => 'Product:',
+                'quantity_label' => 'Quantity:',
+                'amount_label' => 'Amount:',
+                'order_number_label' => 'Order ID:',
+                'lookup_password_label' => 'Lookup password:',
+                'deadline_generic' => 'Please complete payment before the deadline shown on the payment page.',
+                'deadline' => 'Please complete payment before {deadline}.',
+                'no_orders' => 'No orders have been created through the bot yet.',
+                'orders_title' => "My orders\n\nSelect an order to view its latest status:",
+                'order_button' => 'Order {order}',
+                'continue_shopping' => '🛍️ Continue shopping',
+                'wrong_order' => 'This order does not belong to this chat, or its record has expired.',
+                'status_label' => 'Status:',
+                'deadline_label' => 'Payment deadline:',
+                'go_pay' => '🚀 Proceed to payment',
+                'view_delivery' => '📦 View delivery',
+                'refresh' => '🔄 Refresh',
+                'shopping' => '🛍️ Shop',
+                'refresh_status' => '🔄 Refresh status',
+                'qr_missing' => 'Binance QR code or amount due is missing.',
+                'binance_method' => 'Payment method: Binance Pay',
+                'amount_due' => 'Amount due: {amount} {currency}',
+                'quote_expiry' => 'Quote valid until:',
+                'binance_instruction' => 'Scan the QR code below with the Binance app and pay the exact amount.',
+                'qr_sent' => 'The Binance QR code has been sent. Scan the next message.',
+                'wrong_order_short' => 'This order does not belong to this chat.',
+                'delivery_unavailable' => 'This order is not ready for delivery. Status: {status}',
+                'refresh_order' => '🔄 Refresh order',
+                'delivery_heading' => 'Delivery for order {order}:',
+                'method_binance' => 'Binance Pay',
+                'method_wechat' => 'WeChat Pay',
+                'method_alipay' => 'Alipay',
+                'method_usdt' => 'USDT',
+                'payment_method_default' => 'Payment method {code}',
+                'help_text' => "Help\n\n1. Browse products and choose a quantity\n2. Enter your email and order lookup password\n3. Choose a payment method and click the payment button to pay\n4. Refresh status in “My orders”; view delivery content after payment is complete\n\nOrder validity follows the deadline shown on the order page. The bot handles orders and delivery content only in private chats.",
+                'status_wait_pay' => 'Awaiting payment',
+                'status_pending' => 'Pending',
+                'status_processing' => 'Processing',
+                'status_completed' => 'Completed',
+                'status_failure' => 'Processing failed',
+                'status_expired' => 'Expired',
+                'status_abnormal' => 'Abnormal',
+                'status_unknown' => 'Unknown',
+            ],
+            'vi' => [
+                'choose_action' => 'Vui lòng chọn một thao tác:',
+                'cancelled' => 'Quy trình đặt hàng hiện tại đã được hủy.',
+                'continue_hint' => 'Nhấn nút bên dưới để tiếp tục hoặc gửi /cancel để hủy.',
+                'generic_error' => 'Không thể hoàn tất thao tác này. Vui lòng thử lại sau.',
+                'home_text' => "Chào mừng bạn đến NewZoe Shop\n\nBạn có thể duyệt sản phẩm, tạo đơn hàng và chuyển đến thanh toán.",
+                'browse_products' => '🛍️ Duyệt sản phẩm',
+                'my_orders' => '📦 Đơn hàng của tôi',
+                'help_button' => 'ℹ️ Hướng dẫn',
+                'language_button' => '🌐 Ngôn ngữ',
+                'language_title' => 'Chọn ngôn ngữ:',
+                'language_changed' => 'Đã chuyển ngôn ngữ sang: {language}',
+                'products_title' => "Danh sách sản phẩm\n\n",
+                'no_products' => 'Hiện chưa có sản phẩm nào đang bán.',
+                'products_hint' => 'Chọn sản phẩm để xem chi tiết:',
+                'product_default' => 'Sản phẩm',
+                'out_of_stock' => 'Hết hàng',
+                'previous' => '‹ Trang trước',
+                'next' => 'Trang sau ›',
+                'home' => 'Về trang chủ',
+                'product_missing' => 'Sản phẩm không tồn tại hoặc đã ngừng bán.',
+                'product_missing_retry' => 'Sản phẩm không tồn tại hoặc đã ngừng bán. Vui lòng chọn lại.',
+                'price' => 'Giá: ¥{amount}',
+                'stock' => 'Tồn kho: {stock}',
+                'fields_intro' => 'Cần điền thêm thông tin khi đặt hàng:',
+                'field_default' => 'Thông tin',
+                'buy_quantity' => 'Mua {quantity} sản phẩm',
+                'back_products' => '‹ Quay lại danh sách',
+                'quantity_changed' => 'Số lượng mua đã thay đổi. Vui lòng chọn lại.',
+                'selected_email' => "Đã chọn: {product} × {quantity}\n\nNhập email nhận sản phẩm:",
+                'cancel_order' => 'Hủy đặt hàng',
+                'email_invalid' => 'Email không hợp lệ. Vui lòng nhập lại:',
+                'email_recorded' => "Đã lưu email.\n\nNhập mật khẩu tra cứu đơn hàng; gửi - để hệ thống tự tạo mật khẩu ngẫu nhiên:",
+                'password_wait_missing' => 'Hiện không có đơn hàng nào đang chờ mật khẩu tra cứu.',
+                'password_too_long' => 'Mật khẩu tra cứu quá dài. Vui lòng nhập lại:',
+                'auto_password' => '🔐 Tạo mật khẩu tra cứu tự động',
+                'input_required' => 'Nhập {label} (bắt buộc):',
+                'input_optional' => 'Nhập {label} (gửi - để bỏ qua):',
+                'input_required_error' => 'Trường này là bắt buộc. Vui lòng nhập lại:',
+                'payment_wait_missing' => 'Hiện không có đơn hàng nào đang chờ chọn phương thức thanh toán.',
+                'no_payment_methods' => 'Hiện không có phương thức thanh toán khả dụng. Vui lòng thử lại sau.',
+                'payment_select' => "Đã điền đủ thông tin.\n\nChọn phương thức thanh toán:",
+                'session_expired' => 'Phiên đặt hàng đã hết hạn. Vui lòng bắt đầu lại.',
+                'order_id_missing' => 'Thiếu mã đơn hàng.',
+                'order_created' => 'Đã tạo đơn hàng',
+                'product_label' => 'Sản phẩm:',
+                'quantity_label' => 'Số lượng:',
+                'amount_label' => 'Số tiền:',
+                'order_number_label' => 'Mã đơn hàng:',
+                'lookup_password_label' => 'Mật khẩu tra cứu:',
+                'deadline_generic' => 'Vui lòng thanh toán trước thời hạn hiển thị trên trang thanh toán.',
+                'deadline' => 'Vui lòng thanh toán trước {deadline}.',
+                'no_orders' => 'Chưa có đơn hàng nào được tạo qua bot.',
+                'orders_title' => "Đơn hàng của tôi\n\nChọn đơn hàng để xem trạng thái mới nhất:",
+                'order_button' => 'Đơn hàng {order}',
+                'continue_shopping' => '🛍️ Tiếp tục mua sắm',
+                'wrong_order' => 'Đơn hàng này không thuộc cuộc trò chuyện hiện tại hoặc bản ghi đã hết hạn.',
+                'status_label' => 'Trạng thái:',
+                'deadline_label' => 'Hạn thanh toán:',
+                'go_pay' => '🚀 Tiến hành thanh toán',
+                'view_delivery' => '📦 Xem mã thẻ',
+                'refresh' => '🔄 Làm mới',
+                'shopping' => '🛍️ Mua sắm',
+                'refresh_status' => '🔄 Làm mới trạng thái',
+                'qr_missing' => 'Thiếu mã QR Binance hoặc số tiền cần thanh toán.',
+                'binance_method' => 'Phương thức thanh toán: Binance Pay',
+                'amount_due' => 'Số tiền cần trả: {amount} {currency}',
+                'quote_expiry' => 'Báo giá có hiệu lực đến:',
+                'binance_instruction' => 'Dùng ứng dụng Binance quét mã QR bên dưới và thanh toán đúng số tiền.',
+                'qr_sent' => 'Mã QR Binance đã được gửi. Hãy quét mã trong tin nhắn tiếp theo.',
+                'wrong_order_short' => 'Đơn hàng này không thuộc cuộc trò chuyện hiện tại.',
+                'delivery_unavailable' => 'Đơn hàng chưa thể giao. Trạng thái: {status}',
+                'refresh_order' => '🔄 Làm mới đơn hàng',
+                'delivery_heading' => 'Nội dung giao hàng cho đơn {order}:',
+                'method_binance' => 'Binance Pay',
+                'method_wechat' => 'Thanh toán WeChat',
+                'method_alipay' => 'Thanh toán Alipay',
+                'method_usdt' => 'USDT',
+                'payment_method_default' => 'Phương thức thanh toán {code}',
+                'help_text' => "Hướng dẫn\n\n1. Duyệt sản phẩm và chọn số lượng\n2. Nhập email và mật khẩu tra cứu đơn hàng\n3. Chọn phương thức thanh toán và nhấn nút thanh toán\n4. Làm mới trạng thái trong “Đơn hàng của tôi”; xem nội dung giao hàng sau khi thanh toán hoàn tất\n\nThời hạn đơn hàng theo thời hạn hiển thị trên trang đơn hàng. Bot chỉ xử lý đơn hàng và nội dung giao hàng trong trò chuyện riêng tư.",
+                'status_wait_pay' => 'Chờ thanh toán',
+                'status_pending' => 'Đang chờ xử lý',
+                'status_processing' => 'Đang xử lý',
+                'status_completed' => 'Đã hoàn tất',
+                'status_failure' => 'Xử lý thất bại',
+                'status_expired' => 'Đã hết hạn',
+                'status_abnormal' => 'Bất thường',
+                'status_unknown' => 'Không rõ',
+            ],
+        ];
+
+        return $catalog;
     }
 
     private function shortText(string $text, int $limit): string
