@@ -928,7 +928,9 @@ class TelegramShopBotService
             return $this->t($chatId, 'method_usdt');
         }
 
-        return $name !== '' ? $name : $this->t($chatId, 'payment_method_default', ['code' => $code]);
+        return $this->t($chatId, 'payment_method_default', [
+            'code' => $code !== '' ? $code : $name,
+        ]);
     }
 
     private function showLanguages(string $chatId, array $origin = []): void
