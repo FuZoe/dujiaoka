@@ -541,12 +541,32 @@ class OrderProcessService
                 throw new \Exception(__('dujiaoka.prompt.order_inconsistent_amounts'));
             }
 
+            // The original settlement transaction was rolled back. If an
+            // expired order had already returned its coupon, consume that
+            // return now because the payment itself remains settled.
+            $couponWarning = '';
+            if ((int) $order->status === Order::STATUS_EXPIRED
+                && (int) $order->coupon_id > 0
+                && (int) $order->coupon_ret_back === Order::COUPON_BACK_OK) {
+                $couponReclaimed = Coupon::query()
+                    ->whereKey($order->coupon_id)
+                    ->where('ret', '>', 0)
+                    ->decrement('ret', 1);
+                if ($couponReclaimed !== 1) {
+                    $couponWarning = '优惠码返还记录异常，请管理员核对。';
+                }
+                $order->coupon_ret_back = Order::COUPON_BACK_WAIT;
+            }
+
             $order->actual_price = $actualPrice;
             $order->trade_no = $tradeNo;
             $order->status = Order::STATUS_ABNORMAL;
             $message = '支付已确认，卡网发货失败，请补货后重试。';
             if ($reason !== '') {
                 $message .= PHP_EOL . '失败原因：' . mb_substr($reason, 0, 500);
+            }
+            if ($couponWarning !== '') {
+                $message .= PHP_EOL . $couponWarning;
             }
             $order->info = $message;
             $order->save();
