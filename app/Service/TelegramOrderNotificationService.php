@@ -87,10 +87,22 @@ class TelegramOrderNotificationService
 
     public function buttons(Order $order, string $eventKey): array
     {
-        $buttons = [[
-            'text' => '查看订单',
-            'url' => url('/account/orders/'.$order->getKey()),
-        ]];
+        $orderCallback = 'shop:order:'.strtoupper(trim((string) $order->order_sn));
+        if (trim((string) $order->getAttribute('telegram_chat_id')) !== ''
+            && strlen($orderCallback) <= 64
+        ) {
+            // Bot-created customers do not have web-login credentials. Keep
+            // their status and delivery flow inside the private bot chat.
+            $buttons = [[
+                'text' => '查看订单',
+                'callback_data' => $orderCallback,
+            ]];
+        } else {
+            $buttons = [[
+                'text' => '查看订单',
+                'url' => url('/account/orders/'.$order->getKey()),
+            ]];
+        }
 
         if ($eventKey === 'created') {
             $buttons[] = [
