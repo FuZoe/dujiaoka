@@ -24,6 +24,14 @@ class AccountController extends BaseController
         ]);
         $credentials['email'] = strtolower(trim($credentials['email']));
 
+        // Synthetic Telegram addresses are internal identities, not web
+        // accounts. Treat them like any other invalid login without revealing
+        // whether such an address exists.
+        if (Customer::isReservedTelegramEmail($credentials['email'])) {
+            return back()->withErrors(['email' => '邮箱或密码不正确。'])
+                ->withInput($request->only('email'));
+        }
+
         if (!Auth::attempt($credentials, false)) {
             return back()->withErrors(['email' => '邮箱或密码不正确。'])->withInput($request->only('email'));
         }
@@ -41,7 +49,17 @@ class AccountController extends BaseController
     {
         $request->merge(['email' => strtolower(trim((string) $request->input('email')))]);
         $data = $request->validate([
-            'email' => ['required', 'email', 'max:190', Rule::unique('customers', 'email')],
+            'email' => [
+                'required',
+                'email',
+                'max:190',
+                Rule::unique('customers', 'email'),
+                function ($attribute, $value, $fail) {
+                    if (Customer::isReservedTelegramEmail((string) $value)) {
+                        $fail('该邮箱域名为系统保留地址。');
+                    }
+                },
+            ],
             'password' => ['required', 'string', 'min:10', 'max:128', 'confirmed'],
         ]);
 

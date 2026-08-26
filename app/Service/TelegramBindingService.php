@@ -148,13 +148,7 @@ class TelegramBindingService
 
     private function isProvisionedCustomer(Customer $customer, string $chatId): bool
     {
-        // Synthetic accounts are identified by their reserved email shape.
-        // Do not require telegram_bound_at here: older bot-created rows may
-        // predate that marker but still own orders for this chat.
-        return hash_equals(
-            'telegram-'.$chatId.'@telegram.newzoe.cloud',
-            strtolower(trim((string) $customer->email))
-        );
+        return $customer->isTelegramProvisionedFor($chatId);
     }
 
     public function unbind(Customer $customer): void

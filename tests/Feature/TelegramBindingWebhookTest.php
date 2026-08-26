@@ -131,6 +131,21 @@ class TelegramBindingWebhookTest extends TestCase
         $this->assertSame('2010', $target->refresh()->telegram_chat_id);
     }
 
+    public function test_unclaimed_reserved_email_is_not_a_provisioned_bot_customer(): void
+    {
+        $customer = $this->customer('telegram-2020@telegram.newzoe.cloud');
+
+        $this->assertFalse($customer->isTelegramProvisionedFor('2020'));
+
+        $customer->forceFill([
+            'telegram_chat_id' => '2020',
+            'telegram_bound_at' => now(),
+        ])->save();
+
+        $this->assertTrue($customer->refresh()->isTelegramProvisionedFor('2020'));
+        $this->assertFalse($customer->isTelegramProvisionedFor('2021'));
+    }
+
     public function test_webhook_rejects_forged_secret_and_accepts_valid_private_start(): void
     {
         [, $token] = app(TelegramBindingService::class)->issue($this->customer('webhook@example.test'));

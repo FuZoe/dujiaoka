@@ -36,6 +36,30 @@ class CustomerAccountTest extends TestCase
         $this->assertAuthenticatedAs($customer);
     }
 
+    public function test_reserved_telegram_addresses_cannot_be_registered_or_used_to_log_in(): void
+    {
+        $response = $this->from('/register')->post('/register', [
+            'email' => 'Telegram-12345@Telegram.NewZoe.Cloud',
+            'password' => 'correct-horse-battery',
+            'password_confirmation' => 'correct-horse-battery',
+        ]);
+
+        $response->assertRedirect('/register');
+        $response->assertSessionHasErrors('email');
+        $this->assertSame(0, Customer::query()->count());
+
+        // Rows created before this guard must not become web-login accounts.
+        $customer = Customer::query()->create([
+            'email' => 'telegram-12345@telegram.newzoe.cloud',
+            'password' => bcrypt('correct-horse-battery'),
+        ]);
+        $this->from('/login')->post('/login', [
+            'email' => $customer->email,
+            'password' => 'correct-horse-battery',
+        ])->assertRedirect('/login');
+        $this->assertGuest();
+    }
+
     public function test_login_attempts_are_rate_limited(): void
     {
         foreach (range(1, 5) as $attempt) {

@@ -568,11 +568,25 @@ class ShopApiController extends Controller
 
         // A deterministic synthetic address lets a later web-account binding
         // migrate these orders without exposing any customer email address.
-        $email = 'telegram-'.$chatId.'@telegram.newzoe.cloud';
+        // Only reuse it when it was previously provisioned by this app. A
+        // visitor can otherwise pre-register the predictable address before
+        // the first bot checkout and capture ownership of that chat's orders.
+        $baseEmail = 'telegram-'.$chatId.'@'.Customer::TELEGRAM_SYNTHETIC_DOMAIN;
+        $email = $baseEmail;
         $customer = Customer::query()
             ->where('email', $email)
             ->lockForUpdate()
             ->first();
+        if ($customer && !$customer->isTelegramProvisionedFor($chatId)) {
+            // Leave the untrusted row untouched and use a fresh internal
+            // address. The reserved-domain registration guard protects new
+            // rows; this branch also handles rows created before that guard.
+            $customer = null;
+            do {
+                $email = 'telegram-'.$chatId.'-'.Str::lower(Str::random(20))
+                    .'@'.Customer::TELEGRAM_SYNTHETIC_DOMAIN;
+            } while (Customer::query()->where('email', $email)->exists());
+        }
         if (!$customer) {
             $customer = Customer::query()->create([
                 'email' => $email,
