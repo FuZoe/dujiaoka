@@ -85,7 +85,7 @@ class AccountController extends BaseController
     {
         $customer = $request->user();
         $orders = $customer->orders()
-            ->with(['telegramNotifications'])
+            ->with(['goods', 'pay', 'telegramNotifications'])
             ->orderByDesc('id')
             ->limit(20)
             ->get();
@@ -95,7 +95,10 @@ class AccountController extends BaseController
 
     public function order(Request $request, int $id)
     {
-        $order = $request->user()->orders()->whereKey($id)->firstOrFail();
+        $order = $request->user()->orders()
+            ->with(['goods', 'pay'])
+            ->whereKey($id)
+            ->firstOrFail();
         return $this->render('static_pages/orderinfo', ['orders' => [$order]], __('store.page.order_detail'));
     }
 }

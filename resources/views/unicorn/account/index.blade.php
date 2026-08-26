@@ -45,9 +45,12 @@
                             'queued' => __('store.auth.notification_queued'), 'sending' => __('store.auth.notification_sending'), 'retrying' => __('store.auth.notification_retrying'),
                             'sent' => __('store.auth.notification_sent'), 'failed' => __('store.auth.notification_failed'), 'skipped' => __('store.auth.notification_skipped'),
                         ][$lastNotification ? $lastNotification->status : ''] ?? __('store.auth.notification_disabled');
+                        $orderTitle = shop_locale() === 'en' && optional($order->goods)->gd_name_en
+                            ? $order->goods->gd_name_en . ' x ' . $order->buy_amount
+                            : $order->title;
                     @endphp
                     <a class="account-order" href="{{ shop_route('account.order', $order->id) }}">
-                        <div><strong>{{ $order->title }}</strong><span class="mono">{{ $order->order_sn }}</span></div>
+                        <div><strong>{{ $orderTitle }}</strong><span class="mono">{{ $order->order_sn }}</span></div>
                         <div><strong>¥{{ $order->actual_price }}</strong><span>{{ $statusLabel }} · {{ __('store.auth.notification', ['status' => $notificationLabel]) }}</span></div>
                     </a>
                 @empty
