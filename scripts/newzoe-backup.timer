@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily schedule for NewZoe encrypted Google Drive backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Shanghai
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

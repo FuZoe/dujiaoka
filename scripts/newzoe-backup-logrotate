@@ -1,0 +1,9 @@
+/var/log/newzoe-backup/backup.log {
+    weekly
+    rotate 12
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0600 root root
+}

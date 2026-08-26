@@ -1,0 +1,17 @@
+[Unit]
+Description=NewZoe encrypted Google Drive backup
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/newzoe-backup
+TimeoutStartSec=3h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/newzoe-backup /var/log/newzoe-backup /run/lock
