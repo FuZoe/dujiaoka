@@ -57,8 +57,7 @@ if (! function_exists('dujiaoka_config_get')) {
      */
     function dujiaoka_config_get(string $key, $default = null)
     {
-       $sysConfig = Cache::get('system-setting');
-       return $sysConfig[$key] ?? $default;
+       return \App\Service\SystemSettingStore::get($key, $default);
     }
 }
 

@@ -400,6 +400,15 @@ CREATE TABLE `migrations` (
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Durable copy of the admin system settings. Redis remains the runtime cache.
+CREATE TABLE `newzoe_system_settings` (
+  `setting_key` varchar(100) NOT NULL,
+  `setting_value` longtext NOT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ----------------------------
 -- Records of migrations
 -- ----------------------------

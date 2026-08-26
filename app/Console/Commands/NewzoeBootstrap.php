@@ -3,11 +3,11 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use App\Models\BinancePaySetting;
+use App\Service\SystemSettingStore;
 
 class NewzoeBootstrap extends Command
 {
@@ -77,11 +77,7 @@ class NewzoeBootstrap extends Command
             'notice' => '下单后请按收银台显示的金额付款，到账后系统会自动发货。',
             'footer' => '数字商品自动发货服务',
         ];
-        $savedSettings = Cache::get('system-setting', []);
-        Cache::forever(
-            'system-setting',
-            array_merge($defaultSettings, is_array($savedSettings) ? $savedSettings : [])
-        );
+        SystemSettingStore::bootstrap($defaultSettings);
 
         if ($freshInstall && filter_var(env('NEWZOE_CREATE_DEMO', true), FILTER_VALIDATE_BOOLEAN)) {
             $this->createDemoProduct();
