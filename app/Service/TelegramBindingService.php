@@ -80,13 +80,14 @@ class TelegramBindingService
                 ->first();
 
             $hasChatColumn = Schema::hasColumn('orders', 'telegram_chat_id');
-            $orders = null;
+            // Chat-tagged bot orders belong to the Telegram identity. Moving
+            // them does not move unrelated browser orders, whose chat column
+            // remains null.
+            $orders = $hasChatColumn
+                ? Order::query()->where('telegram_chat_id', $chatId)
+                : null;
             if ($previousOwner && $this->isProvisionedCustomer($previousOwner, $chatId)) {
-                // Only synthetic bot owners are migrated. A normal account
-                // rebind releases its old chat without moving unrelated orders.
-                $orders = $hasChatColumn
-                    ? Order::query()->where('telegram_chat_id', $chatId)
-                    : Order::query()->whereRaw('1 = 0');
+                $orders = $orders ?: Order::query()->whereRaw('1 = 0');
                 $orders->orWhere(function ($query) use ($previousOwner) {
                     $query->where('customer_id', $previousOwner->getKey());
                     // Older bot orders were created before the Telegram chat

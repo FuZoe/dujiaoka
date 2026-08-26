@@ -17,7 +17,7 @@
                     <a class="telegram-nav-link" href="{{ route('telegram.bind') }}">绑定 Telegram</a>
                 @endif
             @else
-                <a class="telegram-nav-link" href="{{ route('login') }}">绑定 Telegram</a>
+                <a class="telegram-nav-link" href="{{ route('telegram.bind') }}">绑定 Telegram</a>
                 <a class="@if(\Illuminate\Support\Facades\Request::is('login') || \Illuminate\Support\Facades\Request::is('register')) active @endif" href="{{ route('login') }}">登录</a>
             @endauth
         </nav>

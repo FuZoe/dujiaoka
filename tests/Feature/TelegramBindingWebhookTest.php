@@ -126,7 +126,7 @@ class TelegramBindingWebhookTest extends TestCase
         );
 
         $this->assertSame('bound', $result['status']);
-        $this->assertSame($target->getKey(), $order->refresh()->customer_id);
+        $this->assertSame((int) $target->getKey(), (int) $order->refresh()->customer_id);
         $this->assertNull($provisioned->refresh()->telegram_chat_id);
         $this->assertSame('2010', $target->refresh()->telegram_chat_id);
     }

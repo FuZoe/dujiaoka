@@ -81,13 +81,15 @@ class CustomerAccountTest extends TestCase
         $this->assertSame(1, TelegramBinding::query()->count());
     }
 
-    public function test_guest_navigation_exposes_telegram_binding_that_points_to_login(): void
+    public function test_guest_navigation_exposes_telegram_binding_and_preserves_the_intended_page(): void
     {
         $response = $this->get('/login');
 
         $response->assertOk();
         $response->assertSee('绑定 Telegram');
-        $response->assertSee('href="'.route('login').'"', false);
+        $response->assertSee('href="'.route('telegram.bind').'"', false);
+
+        $this->get(route('telegram.bind'))->assertRedirect(route('login'));
     }
 
     public function test_bound_customer_navigation_exposes_telegram_management(): void
