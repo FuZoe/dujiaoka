@@ -31,6 +31,7 @@ class GoodsController extends AdminController
             $grid->column('id')->sortable();
             $grid->column('picture')->image('', 100, 100);
             $grid->column('gd_name');
+            $grid->column('gd_name_en', admin_trans('goods.fields.gd_name_en'));
             $grid->column('gd_description');
             $grid->column('gd_keywords');
             $grid->column('group.gp_name', admin_trans('goods.fields.group_id'));
@@ -92,8 +93,11 @@ class GoodsController extends AdminController
         return Show::make($id, new Goods(), function (Show $show) {
             $show->id('id');
             $show->field('gd_name');
+            $show->field('gd_name_en', admin_trans('goods.fields.gd_name_en'));
             $show->field('gd_description');
+            $show->field('gd_description_en', admin_trans('goods.fields.gd_description_en'));
             $show->field('gd_keywords');
+            $show->field('gd_keywords_en', admin_trans('goods.fields.gd_keywords_en'));
             $show->field('picture')->image();
             $show->field('retail_price');
             $show->field('actual_price');
@@ -118,6 +122,11 @@ class GoodsController extends AdminController
                 return  "<textarea class=\"form-control field_wholesale_price_cnf _normal_\"  rows=\"10\" cols=\"30\">" . $wholesalePriceCnf . "</textarea>";
             });
             $show->other_ipu_cnf()->unescape()->as(function ($otherIpuCnf) {
+                return  "<textarea class=\"form-control field_wholesale_price_cnf _normal_\"  rows=\"10\" cols=\"30\">" . $otherIpuCnf . "</textarea>";
+            });
+            $show->field('buy_prompt_en', admin_trans('goods.fields.buy_prompt_en'))->unescape();
+            $show->field('description_en', admin_trans('goods.fields.description_en'))->unescape();
+            $show->field('other_ipu_cnf_en', admin_trans('goods.fields.other_ipu_cnf_en'))->unescape()->as(function ($otherIpuCnf) {
                 return  "<textarea class=\"form-control field_wholesale_price_cnf _normal_\"  rows=\"10\" cols=\"30\">" . $otherIpuCnf . "</textarea>";
             });
             $show->api_hook()->unescape()->as(function ($apiHook) {
@@ -151,6 +160,19 @@ class GoodsController extends AdminController
             $form->editor('buy_prompt');
             $form->editor('description');
             $form->textarea('other_ipu_cnf')->help(admin_trans('goods.helps.other_ipu_cnf'));
+            $form->html(
+                '<div class="alert alert-info">'
+                . '<strong>' . admin_trans('goods.labels.english_storefront_content') . '</strong><br>'
+                . admin_trans('goods.helps.english_storefront_content')
+                . '</div>'
+            );
+            $form->text('gd_name_en', admin_trans('goods.fields.gd_name_en'));
+            $form->text('gd_description_en', admin_trans('goods.fields.gd_description_en'));
+            $form->text('gd_keywords_en', admin_trans('goods.fields.gd_keywords_en'));
+            $form->editor('buy_prompt_en', admin_trans('goods.fields.buy_prompt_en'));
+            $form->editor('description_en', admin_trans('goods.fields.description_en'));
+            $form->textarea('other_ipu_cnf_en', admin_trans('goods.fields.other_ipu_cnf_en'))
+                ->help(admin_trans('goods.helps.other_ipu_cnf_en'));
             $form->textarea('wholesale_price_cnf')->help(admin_trans('goods.helps.wholesale_price_cnf'));
             $form->textarea('api_hook');
             $form->number('ord')->default(1)->help(admin_trans('dujiaoka.ord'));

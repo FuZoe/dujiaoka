@@ -61,7 +61,7 @@ class PaypalPayController extends PayController
             $transaction = new Transaction();
             $transaction->setAmount($amount)->setItemList($itemList)->setDescription($description)->setInvoiceNumber($this->order->order_sn);
             $redirectUrls = new RedirectUrls();
-            $redirectUrls->setReturnUrl(route('paypal-return', ['success' => 'ok', 'orderSN' => $this->order->order_sn]))->setCancelUrl(route('paypal-return', ['success' => 'no', 'orderSN' => $this->order->order_sn]));
+            $redirectUrls->setReturnUrl(shop_route('paypal-return', ['success' => 'ok', 'orderSN' => $this->order->order_sn]))->setCancelUrl(shop_route('paypal-return', ['success' => 'no', 'orderSN' => $this->order->order_sn]));
             $payment = new Payment();
             $payment->setIntent('sale')->setPayer($payer)->setRedirectUrls($redirectUrls)->setTransactions([$transaction]);
             $payment->create($paypal);
@@ -85,7 +85,7 @@ class PaypalPayController extends PayController
         $orderSN = $request->input('orderSN');
         if ($success == 'no' || empty($paymentId) || empty($payerID)) {
             // 取消支付
-            redirect(url('detail-order-sn', ['orderSN' => $payerID]));
+            redirect(shop_url('detail-order-sn', ['orderSN' => $payerID]));
         }
         $order = $this->orderService->detailOrderSN($orderSN);
         if (!$order) {
@@ -115,7 +115,7 @@ class PaypalPayController extends PayController
         } catch (\Exception $e) {
             Log::error("paypal支付失败", ['支付失败，支付ID【' . $paymentId . '】,支付人ID【' . $payerID . '】']);
         }
-        return redirect(url('detail-order-sn', ['orderSN' => $orderSN]));
+        return redirect(shop_url('detail-order-sn', ['orderSN' => $orderSN]));
     }
 
 

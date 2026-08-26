@@ -27,7 +27,7 @@ class EpusdtController extends PayController
             $parameter = [
                 "amount" => (float)$this->order->actual_price,//原价
                 "order_id" => $this->order->order_sn, //可以是用户ID,站内商户订单号,用户名
-                'redirect_url' => route('epusdt-return', ['order_id' => $this->order->order_sn]),
+                'redirect_url' => shop_route('epusdt-return', ['order_id' => $this->order->order_sn]),
                 'notify_url' => url($this->payGateway->pay_handleroute . '/notify_url'),
             ];
             $parameter['signature'] = $this->epusdtSign($parameter, $this->payGateway->merchant_id);
@@ -98,7 +98,7 @@ class EpusdtController extends PayController
         $oid = $request->get('order_id');
         // 异步通知还没到就跳转了，所以这里休眠2秒
         sleep(2);
-        return redirect(url('detail-order-sn', ['orderSN' => $oid]));
+        return redirect(shop_url('detail-order-sn', ['orderSN' => $oid]));
     }
 
 }

@@ -19,7 +19,7 @@ class WepayController extends PayController
                 'mch_id' => $this->payGateway->merchant_key,
                 'key' => $this->payGateway->merchant_pem,
                 'notify_url' => url($this->payGateway->pay_handleroute . '/notify_url'),
-                'return_url' => url('detail-order-sn', ['orderSN' => $this->order->order_sn]),
+                'return_url' => shop_url('detail-order-sn', ['orderSN' => $this->order->order_sn]),
                 'http' => [ // optional
                     'timeout' => 10.0,
                     'connect_timeout' => 10.0,

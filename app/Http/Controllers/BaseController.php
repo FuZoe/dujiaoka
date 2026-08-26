@@ -47,8 +47,8 @@ class BaseController extends Controller
     {
         $layout = dujiaoka_config_get('template', 'unicorn');
         $tplPath = $layout . '/errors/error';
-        return view($tplPath, ['title' => __('dujiaoka.error_title'), 'content' => $content, 'url' => $jumpUri])
-            ->with('page_title', __('dujiaoka.error_title'));
+        return view($tplPath, ['title' => __('store.error.title'), 'content' => $content, 'url' => $jumpUri])
+            ->with('page_title', __('store.error.title'));
     }
 
 }

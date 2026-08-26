@@ -70,6 +70,7 @@ class Kernel extends HttpKernel
         'dujiaoka.pay_gate_way' => PayGateWay::class,
         'install.check' => InstallCheck::class,
         'shop.api' => ShopApiSignature::class,
+        'shop.locale' => \App\Http\Middleware\SetShopLocale::class,
     ];
 
     /**

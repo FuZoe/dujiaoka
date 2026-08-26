@@ -90,7 +90,7 @@ class OrderController extends BaseController
             app(\App\Service\TelegramOrderNotificationService::class)->queueCreated($order);
             // 设置订单cookie
             $this->queueCookie($order->order_sn);
-            return redirect(url('/bill', ['orderSN' => $order->order_sn]));
+            return redirect(shop_url('/bill', ['orderSN' => $order->order_sn]));
         } catch (RuleValidationException $exception) {
             DB::rollBack();
             return $this->err($exception->getMessage());
@@ -133,7 +133,12 @@ class OrderController extends BaseController
         if ($order->status == Order::STATUS_EXPIRED) {
             return $this->err(__('dujiaoka.prompt.order_is_expired'));
         }
-        return $this->render('static_pages/bill', $order, __('dujiaoka.page-title.bill'));
+        if (shop_locale() === 'en' && $order->goods && trim((string) $order->goods->gd_name_en) !== '') {
+            // Translate only this view snapshot; order processing keeps the
+            // original title stored at checkout.
+            $order->title = $order->goods->gd_name_en;
+        }
+        return $this->render('static_pages/bill', $order, __('store.page.bill'));
     }
 
 
@@ -181,7 +186,7 @@ class OrderController extends BaseController
         if (!$order) {
             return $this->err(__('dujiaoka.prompt.order_does_not_exist'));
         }
-        return $this->render('static_pages/orderinfo', ['orders' => [$order]], __('dujiaoka.page-title.order-detail'));
+        return $this->render('static_pages/orderinfo', ['orders' => [$order]], __('store.page.order_detail'));
     }
 
     /**
@@ -224,7 +229,7 @@ class OrderController extends BaseController
         if (!$orders) {
             return $this->err(__('dujiaoka.prompt.no_related_order_found'));
         }
-        return $this->render('static_pages/orderinfo', ['orders' => $orders], __('dujiaoka.page-title.order-detail'));
+        return $this->render('static_pages/orderinfo', ['orders' => $orders], __('store.page.order_detail'));
     }
 
     /**
@@ -244,7 +249,7 @@ class OrderController extends BaseController
         }
         $orderSNS = json_decode($cookies, true);
         $orders = $this->orderService->byOrderSNS($orderSNS);
-        return $this->render('static_pages/orderinfo', ['orders' => $orders], __('dujiaoka.page-title.order-detail'));
+        return $this->render('static_pages/orderinfo', ['orders' => $orders], __('store.page.order_detail'));
     }
 
     /**
@@ -259,7 +264,7 @@ class OrderController extends BaseController
      */
     public function orderSearch(Request $request)
     {
-        return $this->render('static_pages/searchOrder', [], __('dujiaoka.page-title.order-search'));
+        return $this->render('static_pages/searchOrder', [], __('store.page.order_search'));
     }
 
 }

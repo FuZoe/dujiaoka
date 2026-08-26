@@ -123,9 +123,17 @@ class PayController extends BaseController
             // 如果订单金额为0 代表无需支付，直接成功
             if ($bccomp == 0) {
                 $this->orderProcessService->completedOrder($this->order->order_sn, 0.00);
-                return redirect(url('detail-order-sn', ['orderSN' => $this->order->order_sn]));
+                return redirect(shop_url('detail-order-sn', ['orderSN' => $this->order->order_sn]));
             }
-            return redirect(url(urldecode($handle), ['payway' => $payway, 'orderSN' => $orderSN]));
+            // Provider routes stay canonical at /pay/*; carry the storefront
+            // language as a query parameter so their rendered page remains
+            // localized without changing webhook URLs.
+            $gatewayPath = ltrim(urldecode($handle), '/');
+            $query = ['payway' => $payway, 'orderSN' => $orderSN];
+            if (shop_locale() === 'en') {
+                $query['locale'] = 'en';
+            }
+            return redirect(url($gatewayPath, $query));
         } catch (RuleValidationException $exception) {
             return $this->err($exception->getMessage());
         }

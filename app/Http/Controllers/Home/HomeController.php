@@ -47,7 +47,21 @@ class HomeController extends BaseController
     public function index(Request $request)
     {
         $goods = $this->goodsService->withGroup();
-        return $this->render('static_pages/home', ['data' => $goods], __('dujiaoka.page-title.home'));
+        if (shop_locale() === 'en' && is_array($goods)) {
+            foreach ($goods as &$group) {
+                $group['gp_name'] = shop_localized($group, 'gp_name', $group['gp_name'] ?? '');
+                if (!empty($group['goods']) && is_array($group['goods'])) {
+                    foreach ($group['goods'] as &$item) {
+                        foreach (['gd_name', 'gd_description', 'gd_keywords'] as $field) {
+                            $item[$field] = shop_localized($item, $field, $item[$field] ?? '');
+                        }
+                    }
+                    unset($item);
+                }
+            }
+            unset($group);
+        }
+        return $this->render('static_pages/home', ['data' => $goods], __('store.page.home'));
     }
 
     /**
@@ -70,6 +84,18 @@ class HomeController extends BaseController
                 $goods->open_coupon = 1;
             }
             $formatGoods = $this->goodsService->format($goods);
+            // English storefront pages render the human-maintained *_en values
+            // when present. This is presentation-only and never persists a
+            // translated value back to the source product record.
+            foreach (['gd_name', 'gd_description', 'gd_keywords', 'description', 'buy_prompt'] as $field) {
+                $formatGoods->{$field} = shop_localized($formatGoods, $field, $formatGoods->{$field});
+            }
+            if (shop_locale() === 'en' && !empty($formatGoods->other_ipu_cnf_en)) {
+                $translatedInput = format_charge_input($formatGoods->other_ipu_cnf_en);
+                if (is_array($translatedInput)) {
+                    $formatGoods->other_ipu = $translatedInput;
+                }
+            }
             // 加载支付方式.
             $client = Pay::PAY_CLIENT_PC;
             if (app('Jenssegers\Agent')->isMobile()) {

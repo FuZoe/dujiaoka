@@ -44,7 +44,7 @@ class NewzoePayController extends PayController
                 'expiresAt' => $expiresAt->toIso8601String(),
                 'matchExpiresAt' => $matchExpiresAt->toIso8601String(),
                 'orderId' => $this->order->order_sn,
-                'returnUrl' => $shopUrl . '/detail-order-sn/' . $this->order->order_sn,
+                'returnUrl' => shop_url('/detail-order-sn/' . $this->order->order_sn),
                 'title' => $this->order->title,
             ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
             $timestamp = (string) round(microtime(true) * 1000);

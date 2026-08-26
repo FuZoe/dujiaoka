@@ -27,8 +27,8 @@ class CoinbaseController extends PayController
                         }
 
 
-                        $redirect_url = url('detail-order-sn', ['orderSN' => $this->order->order_sn]);  //同步地址
-                        $cancel_url = url('detail-order-sn', ['orderSN' => $this->order->order_sn]);  //同步地址
+                        $redirect_url = shop_url('detail-order-sn', ['orderSN' => $this->order->order_sn]);  //同步地址
+                        $cancel_url = shop_url('detail-order-sn', ['orderSN' => $this->order->order_sn]);  //同步地址
                         $config = [
                             'name'=>$this->order->title,
                             'description'=>$this->order->title.'需付款'.$price_amount.'元',

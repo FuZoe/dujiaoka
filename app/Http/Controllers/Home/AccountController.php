@@ -13,7 +13,7 @@ class AccountController extends BaseController
 {
     public function showLogin()
     {
-        return $this->render('account/login', [], '登录');
+        return $this->render('account/login', [], __('store.page.login'));
     }
 
     public function login(Request $request)
@@ -28,21 +28,21 @@ class AccountController extends BaseController
         // accounts. Treat them like any other invalid login without revealing
         // whether such an address exists.
         if (Customer::isReservedTelegramEmail($credentials['email'])) {
-            return back()->withErrors(['email' => '邮箱或密码不正确。'])
+            return back()->withErrors(['email' => __('store.auth.invalid_credentials')])
                 ->withInput($request->only('email'));
         }
 
         if (!Auth::attempt($credentials, false)) {
-            return back()->withErrors(['email' => '邮箱或密码不正确。'])->withInput($request->only('email'));
+            return back()->withErrors(['email' => __('store.auth.invalid_credentials')])->withInput($request->only('email'));
         }
 
         $request->session()->regenerate();
-        return redirect()->intended(route('account'));
+        return redirect()->intended(shop_route('account'));
     }
 
     public function showRegister()
     {
-        return $this->render('account/register', [], '注册账户');
+        return $this->render('account/register', [], __('store.page.register'));
     }
 
     public function register(Request $request)
@@ -56,7 +56,7 @@ class AccountController extends BaseController
                 Rule::unique('customers', 'email'),
                 function ($attribute, $value, $fail) {
                     if (Customer::isReservedTelegramEmail((string) $value)) {
-                        $fail('该邮箱域名为系统保留地址。');
+                        $fail(__('store.auth.reserved_email'));
                     }
                 },
             ],
@@ -70,7 +70,7 @@ class AccountController extends BaseController
         Auth::login($customer);
         $request->session()->regenerate();
 
-        return redirect()->route('account');
+        return redirect()->to(shop_route('account'));
     }
 
     public function logout(Request $request)
@@ -78,7 +78,7 @@ class AccountController extends BaseController
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();
-        return redirect('/');
+        return redirect(shop_url('/'));
     }
 
     public function account(Request $request)
@@ -90,12 +90,12 @@ class AccountController extends BaseController
             ->limit(20)
             ->get();
 
-        return $this->render('account/index', compact('customer', 'orders'), '我的账户');
+        return $this->render('account/index', compact('customer', 'orders'), __('store.page.account'));
     }
 
     public function order(Request $request, int $id)
     {
         $order = $request->user()->orders()->whereKey($id)->firstOrFail();
-        return $this->render('static_pages/orderinfo', ['orders' => [$order]], '订单详情');
+        return $this->render('static_pages/orderinfo', ['orders' => [$order]], __('store.page.order_detail'));
     }
 }

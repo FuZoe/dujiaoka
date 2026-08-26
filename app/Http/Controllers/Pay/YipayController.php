@@ -18,7 +18,7 @@ class YipayController extends PayController
                 'pid' =>  $this->payGateway->merchant_id,
                 'type' => $payway,
                 'out_trade_no' => $this->order->order_sn,
-                'return_url' => route('yipay-return', ['order_id' => $this->order->order_sn]),
+                'return_url' => shop_route('yipay-return', ['order_id' => $this->order->order_sn]),
                 'notify_url' => url($this->payGateway->pay_handleroute . '/notify_url'),
                 'name'   => $this->order->order_sn,
                 'money'  => (float)$this->order->actual_price,
@@ -97,7 +97,7 @@ class YipayController extends PayController
         $oid = $request->get('order_id');
         // 有些易支付太垃了，异步通知还没到就跳转了，导致订单显示待支付，其实已经支付了，所以这里休眠2秒
         sleep(2);
-        return redirect(url('detail-order-sn', ['orderSN' => $oid]));
+        return redirect(shop_url('detail-order-sn', ['orderSN' => $oid]));
     }
 
 }

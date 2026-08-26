@@ -25,7 +25,7 @@ class PaysapiController extends PayController
             $orderid = $this->order->order_sn;    //每次有任何参数变化，订单号就变一个吧。
             $uid = $this->payGateway->merchant_id; //"此处填写PaysApi的uid";
             $token = $this->payGateway->merchant_pem; //"此处填写PaysApi的Token";
-            $return_url = route('paysapi-return', ['order_id' => $this->order->order_sn]);
+            $return_url = shop_route('paysapi-return', ['order_id' => $this->order->order_sn]);
             $notify_url = url($this->payGateway->pay_handleroute . '/notify_url');
             switch ($payway){
                 case 'pszfb':
@@ -107,7 +107,7 @@ class PaysapiController extends PayController
     {
         $oid = $request->input('order_id');
         sleep(1);
-        return redirect(url('detail-order-sn', ['orderSN' => $oid]));
+        return redirect(shop_url('detail-order-sn', ['orderSN' => $oid]));
     }
 
 }

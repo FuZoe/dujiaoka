@@ -33,8 +33,8 @@ class BinancePayController extends PayController
                 'order' => $this->order,
                 'attempt' => $attempt,
                 'config' => $setting,
-                'statusUrl' => url('/pay/binance/status/' . $this->order->order_sn),
-                'returnUrl' => url('/detail-order-sn/' . $this->order->order_sn),
+                'statusUrl' => shop_global_url('/pay/binance/status/' . $this->order->order_sn),
+                'returnUrl' => shop_url('/detail-order-sn/' . $this->order->order_sn),
             ])->with('page_title', __('pay.binance.checkout.page_title'));
         } catch (RuleValidationException $exception) {
             return $this->err($exception->getMessage());
@@ -65,7 +65,7 @@ class BinancePayController extends PayController
         return response()->json([
             'status' => $paid ? 'paid' : (string) $attempt->status,
             'paid' => $paid,
-            'redirect_url' => $paid ? url('/detail-order-sn/' . $order->order_sn) : null,
+            'redirect_url' => $paid ? shop_url('/detail-order-sn/' . $order->order_sn) : null,
             'expires_at' => optional($attempt->expires_at)->toIso8601String(),
             'expected_usdt' => $attempt->expected_usdt,
         ]);

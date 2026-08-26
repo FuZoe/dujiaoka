@@ -29,7 +29,7 @@ class TokenPayController extends PayController
                 "OutOrderId" => $this->order->order_sn, 
                 "OrderUserKey" => $this->order->email, 
                 "Currency" => $this->payGateway->merchant_id,
-                'RedirectUrl' => route('tokenpay-return', ['order_id' => $this->order->order_sn]),
+                'RedirectUrl' => shop_route('tokenpay-return', ['order_id' => $this->order->order_sn]),
                 'NotifyUrl' => url($this->payGateway->pay_handleroute . '/notify_url'),
             ];
             $parameter['Signature'] = $this->VerifySign($parameter, $this->payGateway->merchant_key);
@@ -99,7 +99,7 @@ class TokenPayController extends PayController
         $oid = $request->get('order_id');
         // 异步通知还没到就跳转了，所以这里休眠2秒
         sleep(2);
-        return redirect(url('detail-order-sn', ['orderSN' => $oid]));
+        return redirect(shop_url('detail-order-sn', ['orderSN' => $oid]));
     }
 
 }

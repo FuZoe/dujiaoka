@@ -62,6 +62,144 @@ if (! function_exists('dujiaoka_config_get')) {
     }
 }
 
+if (! function_exists('shop_locale')) {
+
+    /**
+     * Return the locale selected by the storefront route.
+     */
+    function shop_locale(): string
+    {
+        return app()->getLocale() === 'en' ? 'en' : 'zh_CN';
+    }
+}
+
+if (! function_exists('shop_locale_url')) {
+
+    /**
+     * Build a storefront URL in the requested locale without affecting API,
+     * webhook, or payment provider callback URLs.
+     *
+     * @param string $locale
+     * @param string $path
+     * @param array $parameters
+     * @return string
+     */
+    function shop_locale_url(string $locale, string $path = '', array $parameters = []): string
+    {
+        $path = ltrim($path, '/');
+        $prefix = $locale === 'en' ? 'en' : '';
+        $path = trim($prefix . '/' . $path, '/');
+
+        return url($path, $parameters);
+    }
+}
+
+if (! function_exists('shop_url')) {
+
+    /**
+     * Build a URL that stays inside the current storefront locale.
+     *
+     * @param string $path
+     * @param array $parameters
+     * @return string
+     */
+    function shop_url(string $path = '', array $parameters = []): string
+    {
+        return shop_locale_url(shop_locale(), $path, $parameters);
+    }
+}
+
+if (! function_exists('shop_route')) {
+
+    /**
+     * Resolve a named storefront route in the current locale.
+     *
+     * @param string $name
+     * @param mixed $parameters
+     * @param bool $absolute
+     * @return string
+     */
+    function shop_route(string $name, $parameters = [], bool $absolute = true): string
+    {
+        $routeName = shop_locale() === 'en' ? 'en.' . $name : $name;
+        if (shop_locale() === 'en' && !\Illuminate\Support\Facades\Route::has($routeName)) {
+            if (is_array($parameters)) {
+                $parameters['locale'] = 'en';
+            }
+            return route($name, $parameters, $absolute);
+        }
+
+        return route($routeName, $parameters, $absolute);
+    }
+}
+
+if (! function_exists('shop_global_url')) {
+
+    /**
+     * Build a canonical root URL while carrying the storefront language for
+     * a browser-facing global route such as a payment return/status endpoint.
+     */
+    function shop_global_url(string $path = '', array $parameters = []): string
+    {
+        if (shop_locale() === 'en') {
+            $parameters['locale'] = 'en';
+        }
+
+        return url(ltrim($path, '/'), $parameters);
+    }
+}
+
+if (! function_exists('shop_switch_locale_url')) {
+
+    /**
+     * Keep the current storefront path while switching its locale prefix.
+     */
+    function shop_switch_locale_url(string $locale): string
+    {
+        $path = trim(request()->path(), '/');
+        if (strpos($path, 'en/') === 0) {
+            $path = substr($path, 3);
+        } elseif ($path === 'en') {
+            $path = '';
+        }
+
+        $url = shop_locale_url($locale, $path);
+        $query = request()->getQueryString();
+
+        return $query ? $url . '?' . $query : $url;
+    }
+}
+
+if (! function_exists('shop_localized')) {
+
+    /**
+     * Read an English product/group field when it has been filled in, then
+     * fall back to its Chinese source value. The helper accepts Eloquent
+     * models and array data returned by the catalog query.
+     *
+     * @param mixed $subject
+     * @param string $field
+     * @param mixed $default
+     * @return mixed
+     */
+    function shop_localized($subject, string $field, $default = '')
+    {
+        if (is_array($subject)) {
+            $value = $subject[$field] ?? $default;
+            $english = $subject[$field . '_en'] ?? null;
+        } else {
+            $value = data_get($subject, $field, $default);
+            $english = data_get($subject, $field . '_en');
+        }
+
+        if (shop_locale() === 'en' && is_string($english) && trim($english) !== '') {
+            return $english;
+        }
+
+        return $value;
+    }
+}
+
 if (! function_exists('format_wholesale_price')) {
 
     /**

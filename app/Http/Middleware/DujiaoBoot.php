@@ -36,7 +36,7 @@ class DujiaoBoot
             return response()->view($tplPath, ['nowUri' => $nowUri]);
         }
         // 语言检测
-        $lang = dujiaoka_config_get('language', 'zh_CN');
+        $lang = $request->attributes->get('shop_locale', dujiaoka_config_get('language', 'zh_CN'));
         app()->setLocale($lang);
         // 极验
         $geetest = dujiaoka_config_get('is_open_geetest', BaseModel::STATUS_CLOSE);

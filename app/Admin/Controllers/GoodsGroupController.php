@@ -25,6 +25,7 @@ class GoodsGroupController extends AdminController
             $grid->model()->orderBy('id', 'DESC');
             $grid->column('id')->sortable();
             $grid->column('gp_name')->editable();
+            $grid->column('gp_name_en', admin_trans('goods-group.fields.gp_name_en'))->editable();
             $grid->column('is_open')->switch();
             $grid->column('ord')->editable();
             $grid->column('created_at');
@@ -59,6 +60,7 @@ class GoodsGroupController extends AdminController
         return Show::make($id, new GoodsGroup(), function (Show $show) {
             $show->field('id');
             $show->field('gp_name');
+            $show->field('gp_name_en', admin_trans('goods-group.fields.gp_name_en'));
             $show->field('is_open')->as(function ($isOpen) {
                 if ($isOpen == GoodsGroupModel::STATUS_OPEN) {
                     return admin_trans('dujiaoka.status_open');
@@ -82,6 +84,8 @@ class GoodsGroupController extends AdminController
         return Form::make(new GoodsGroup(), function (Form $form) {
             $form->display('id');
             $form->text('gp_name');
+            $form->text('gp_name_en', admin_trans('goods-group.fields.gp_name_en'))
+                ->help(admin_trans('goods-group.helps.gp_name_en'));
             $form->switch('is_open')->default(GoodsGroupModel::STATUS_OPEN);
             $form->number('ord')->default(1)->help(admin_trans('dujiaoka.ord'));
             $form->display('created_at');

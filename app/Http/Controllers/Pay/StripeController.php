@@ -30,7 +30,7 @@ class StripeController extends PayController
                     $usd = bcmul($this->getUsdCurrency($this->order->actual_price), 100, 2);
                     $orderid = $this->order->order_sn;
                     $pk = $this->payGateway->merchant_id;
-                    $return_url = site_url() . $this->payGateway->pay_handleroute . '/return_url/?orderid=' . $this->order->order_sn;
+                    $return_url = shop_global_url($this->payGateway->pay_handleroute . '/return_url', ['orderid' => $this->order->order_sn]);
                     $html = "<html class=\"js cssanimations\">
 <head lang=\"en\">
     <meta charset=\"UTF-8\">
@@ -436,7 +436,7 @@ class StripeController extends PayController
         $data = $request->all();
         $cacheord = $this->orderService->detailOrderSN($data['orderid']);
         if (!$cacheord) {
-            return redirect(url('detail-order-sn', ['orderSN' => $data['orderid']]));
+            return redirect(shop_url('detail-order-sn', ['orderSN' => $data['orderid']]));
         }
         $payGateway = $this->payService->detail($cacheord->pay_id);
         \Stripe\Stripe::setApiKey($payGateway -> merchant_pem);
@@ -452,7 +452,7 @@ class StripeController extends PayController
                 $this->orderProcessService->completedOrder($data['orderid'], $source_object->amount / 100, $source_object->id);
             }
         }
-        return redirect(url('detail-order-sn', ['orderSN' => $data['orderid']]));
+            return redirect(shop_url('detail-order-sn', ['orderSN' => $data['orderid']]));
     }
 
     public function check(Request $request)

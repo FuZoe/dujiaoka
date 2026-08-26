@@ -162,7 +162,7 @@ class AlipayController extends PayController
 
         if ($withCallbacks) {
             $config['notify_url'] = url($gateway->pay_handleroute . '/notify_url');
-            $config['return_url'] = url('detail-order-sn', ['orderSN' => $this->order->order_sn]);
+            $config['return_url'] = shop_url('detail-order-sn', ['orderSN' => $this->order->order_sn]);
             $config['http'] = [
                 'timeout' => 10.0,
                 'connect_timeout' => 10.0,

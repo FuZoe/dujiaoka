@@ -13,8 +13,8 @@ class TelegramBindingController extends BaseController
     {
         $username = ltrim(trim((string) config('services.telegram.bot_username')), '@');
         if ($username === '') {
-            return redirect()->route('account')
-                ->with('status', 'Telegram 绑定服务正在配置中，请稍后再试。');
+            return redirect()->to(shop_route('account'))
+                ->with('status', __('store.telegram.not_configured'));
         }
 
         [$binding, $token] = $bindings->issue($request->user());
@@ -23,7 +23,7 @@ class TelegramBindingController extends BaseController
         return $this->render(
             'account/telegram-bind',
             compact('binding', 'deepLink'),
-            '绑定 Telegram'
+            __('store.page.telegram_bind')
         );
     }
 
@@ -50,6 +50,6 @@ class TelegramBindingController extends BaseController
     public function destroy(Request $request, TelegramBindingService $bindings)
     {
         $bindings->unbind($request->user());
-        return redirect()->route('account')->with('status', 'Telegram 已解绑。');
+        return redirect()->to(shop_route('account'))->with('status', __('store.telegram.unbound'));
     }
 }
