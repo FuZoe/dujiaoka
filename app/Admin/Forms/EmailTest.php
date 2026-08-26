@@ -14,6 +14,7 @@ use Dcat\Admin\Widgets\Form;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Mail\MailServiceProvider;
 use Illuminate\Support\Facades\Mail;
+use App\Service\SystemSettingStore;
 
 class EmailTest extends Form
 {
@@ -29,7 +30,7 @@ class EmailTest extends Form
       $to = $input['to'];
       $title = $input['title'];
       $body = $input['body'];
-      $sysConfig = cache('system-setting');
+      $sysConfig = SystemSettingStore::all();
       $mailConfig = [
           'driver' => $sysConfig['driver'] ?? 'smtp',
           'host' => $sysConfig['host'] ?? '',

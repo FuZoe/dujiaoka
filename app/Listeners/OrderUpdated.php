@@ -8,6 +8,7 @@ use App\Models\Order;
 use Illuminate\Support\Facades\DB;
 use App\Events\OrderUpdated as OrderUpdatedEvent;
 use App\Service\TelegramOrderNotificationService;
+use App\Service\SystemSettingStore;
 
 class OrderUpdated
 {
@@ -32,7 +33,7 @@ class OrderUpdated
         if ($event->order->wasChanged('status') && DB::transactionLevel() === 0) {
             app(TelegramOrderNotificationService::class)->queueStatus($event->order);
         }
-        $sysCache = cache('system-setting');
+        $sysCache = SystemSettingStore::all();
         // 当代充商品状态，将会对顾客进行订单内容推送
         $order = [
             'created_at' => date('Y-m-d H:i'),

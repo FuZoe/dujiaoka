@@ -9,6 +9,7 @@ use Illuminate\Mail\MailServiceProvider;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Mail;
+use App\Service\SystemSettingStore;
 
 class MailSend implements ShouldQueue
 {
@@ -57,7 +58,7 @@ class MailSend implements ShouldQueue
     {
         $body = $this->content;
         $title = $this->title;
-        $sysConfig = cache('system-setting');
+        $sysConfig = SystemSettingStore::all();
         $mailConfig = [
             'driver' => $sysConfig['driver'] ?? 'smtp',
             'host' => $sysConfig['host'] ?? '',
