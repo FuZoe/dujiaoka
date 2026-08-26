@@ -4,7 +4,7 @@
 <main class="store-main order-page">
     <div class="store-shell narrow-shell">
         <section class="order-sheet qr-sheet">
-            <div class="eyebrow">{{ $payname }}</div>
+            <div class="eyebrow">{{ shop_payment_label($payname) }}</div>
             <h1>{{ __('store.qr.title') }}</h1>
             <p>{{ __('store.qr.expires', ['minutes' => dujiaoka_config_get('order_expire_time', 20)]) }}</p>
             <div class="qr-frame"><img src="data:image/png;base64,{!! base64_encode(QrCode::format('png')->size(240)->generate($qr_code)) !!}" alt="{{ __('store.qr.alt') }}"></div>

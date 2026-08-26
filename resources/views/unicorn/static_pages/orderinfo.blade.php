@@ -26,7 +26,7 @@
                         <div><dt>{{ __('store.order.amount_paid') }}</dt><dd>¥{{ $order['actual_price'] }}</dd></div>
                         <div><dt>{{ __('store.order.quantity') }}</dt><dd>{{ $order['buy_amount'] }}</dd></div>
                         <div><dt>{{ __('store.order.email') }}</dt><dd>{{ $order['email'] }}</dd></div>
-                        <div><dt>{{ __('store.order.payment') }}</dt><dd>{{ $order['pay']['pay_name'] ?? '-' }}</dd></div>
+                        <div><dt>{{ __('store.order.payment') }}</dt><dd>{{ shop_payment_label($order['pay'] ?? null, '-') }}</dd></div>
                         <div><dt>{{ __('store.order.created_at') }}</dt><dd>{{ $order['created_at'] }}</dd></div>
                         <div><dt>{{ __('store.order.delivery') }}</dt><dd>{{ $order['type'] == \App\Models\Order::AUTOMATIC_DELIVERY ? __('store.order.automatic') : __('store.order.manual') }}</dd></div>
                     </dl>

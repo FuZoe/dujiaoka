@@ -237,6 +237,54 @@ if (! function_exists('shop_localized')) {
     }
 }
 
+if (! function_exists('shop_payment_label')) {
+
+    /**
+     * Localize the built-in payment labels while preserving custom gateway
+     * names configured by the merchant.
+     *
+     * @param mixed $payment A payment model, array, or display name string.
+     * @param string $default
+     * @return string
+     */
+    function shop_payment_label($payment, string $default = ''): string
+    {
+        if (is_string($payment)) {
+            $payCheck = strtolower(trim($payment));
+            $payName = trim($payment);
+        } else {
+            $payCheck = strtolower(trim((string) data_get($payment, 'pay_check', '')));
+            $payName = trim((string) data_get($payment, 'pay_name', ''));
+        }
+
+        if (shop_locale() !== 'en') {
+            return $payName !== '' ? $payName : $default;
+        }
+
+        $isBinance = $payCheck === 'binancepay'
+            || strpos($payCheck, 'binance') !== false
+            || strpos($payName, '币安') !== false;
+        $isAlipay = strpos($payCheck, 'ali') === 0
+            || strpos($payCheck, 'zfb') !== false
+            || strpos($payName, '支付宝') !== false;
+        $isWechat = strpos($payCheck, 'wx') === 0
+            || strpos($payCheck, 'wechat') !== false
+            || strpos($payName, '微信') !== false;
+
+        if ($isBinance) {
+            return __('store.buy.binance');
+        }
+        if ($isAlipay) {
+            return __('store.buy.alipay');
+        }
+        if ($isWechat) {
+            return __('store.buy.wechat');
+        }
+
+        return $payName !== '' ? $payName : ($default !== '' ? $default : __('store.buy.generic_payment'));
+    }
+}
+
 if (! function_exists('format_wholesale_price')) {
 
     /**

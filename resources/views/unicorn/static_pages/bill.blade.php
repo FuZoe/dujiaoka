@@ -15,7 +15,7 @@
                 <div><dt>{{ __('store.bill.quantity') }}</dt><dd>{{ $buy_amount }}</dd></div>
                 <div><dt>{{ __('store.bill.email') }}</dt><dd>{{ $email }}</dd></div>
                 <div><dt>{{ __('store.bill.delivery') }}</dt><dd>{{ $type == \App\Models\Order::AUTOMATIC_DELIVERY ? __('store.bill.automatic') : __('store.bill.manual') }}</dd></div>
-                <div><dt>{{ __('store.bill.payment') }}</dt><dd>{{ $pay['pay_name'] }}</dd></div>
+                <div><dt>{{ __('store.bill.payment') }}</dt><dd>{{ shop_payment_label($pay) }}</dd></div>
                 <div><dt>{{ __('store.bill.created_at') }}</dt><dd>{{ $created_at }}</dd></div>
                 @if(!empty($info))<div><dt>{{ __('store.bill.order_info') }}</dt><dd>{{ $info }}</dd></div>@endif
             </dl>

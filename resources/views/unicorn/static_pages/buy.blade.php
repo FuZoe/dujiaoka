@@ -118,7 +118,7 @@
                                     @else
                                         <span class="payment-mark generic-mark">{{ __('store.buy.generic_payment') }}</span>
                                     @endif
-                                    <span><strong>{{ $way['pay_name'] }}</strong><small>{{ __('store.buy.payment_auto_confirm') }}</small></span>
+                                    <span><strong>{{ shop_payment_label($way) }}</strong><small>{{ __('store.buy.payment_auto_confirm') }}</small></span>
                                     <i aria-hidden="true"></i>
                                 </label>
                             @empty
