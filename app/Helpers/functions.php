@@ -69,6 +69,19 @@ if (! function_exists('shop_locale')) {
      */
     function shop_locale(): string
     {
+        // Route middleware records the storefront choice on the request. Read
+        // that value first so a later package/config locale change cannot make
+        // a single request generate links in the wrong language.
+        if (function_exists('request') && app()->bound('request')) {
+            $requestLocale = request()->attributes->get('shop_locale');
+            if ($requestLocale === 'en') {
+                return 'en';
+            }
+            if ($requestLocale !== null) {
+                return 'zh_CN';
+            }
+        }
+
         return app()->getLocale() === 'en' ? 'en' : 'zh_CN';
     }
 }
@@ -86,7 +99,15 @@ if (! function_exists('shop_locale_url')) {
      */
     function shop_locale_url(string $locale, string $path = '', array $parameters = []): string
     {
+        $locale = strtolower(trim($locale)) === 'en' ? 'en' : 'zh_CN';
         $path = ltrim($path, '/');
+        // Callers normally pass a path relative to the storefront. Avoid a
+        // duplicated /en prefix when a full storefront path is supplied.
+        if (strpos($path, 'en/') === 0) {
+            $path = substr($path, 3);
+        } elseif ($path === 'en') {
+            $path = '';
+        }
         $prefix = $locale === 'en' ? 'en' : '';
         $path = trim($prefix . '/' . $path, '/');
 
@@ -124,9 +145,18 @@ if (! function_exists('shop_route')) {
         $routeName = shop_locale() === 'en' ? 'en.' . $name : $name;
         if (shop_locale() === 'en' && !\Illuminate\Support\Facades\Route::has($routeName)) {
             if (is_array($parameters)) {
-                $parameters['locale'] = 'en';
+                if (!array_key_exists('locale', $parameters)) {
+                    $parameters['locale'] = 'en';
+                }
+                return route($name, $parameters, $absolute);
             }
-            return route($name, $parameters, $absolute);
+
+            // Laravel accepts scalar route parameters, but adding a query
+            // parameter to that scalar is not possible through route().
+            // Generate the URL first, then carry the locale explicitly.
+            $url = route($name, $parameters, $absolute);
+            $separator = strpos($url, '?') === false ? '?' : '&';
+            return $url . $separator . 'locale=en';
         }
 
         return route($routeName, $parameters, $absolute);
@@ -142,7 +172,9 @@ if (! function_exists('shop_global_url')) {
     function shop_global_url(string $path = '', array $parameters = []): string
     {
         if (shop_locale() === 'en') {
-            $parameters['locale'] = 'en';
+            if (!array_key_exists('locale', $parameters)) {
+                $parameters['locale'] = 'en';
+            }
         }
 
         return url(ltrim($path, '/'), $parameters);
@@ -164,7 +196,12 @@ if (! function_exists('shop_switch_locale_url')) {
         }
 
         $url = shop_locale_url($locale, $path);
-        $query = request()->getQueryString();
+        $queryParameters = request()->query();
+        // The path itself selects the storefront language. Carrying an old
+        // locale query through a switch would override the new selection on
+        // canonical /pay/* routes.
+        unset($queryParameters['locale']);
+        $query = http_build_query($queryParameters);
 
         return $query ? $url . '?' . $query : $url;
     }

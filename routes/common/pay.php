@@ -8,7 +8,8 @@
  */
 use Illuminate\Support\Facades\Route;
 
-Route::get('pay-gateway/{handle}/{payway}/{orderSN}', 'PayController@redirectGateway');
+Route::get('pay-gateway/{handle}/{payway}/{orderSN}', 'PayController@redirectGateway')
+    ->middleware('shop.locale');
 Route::get('en/pay-gateway/{handle}/{payway}/{orderSN}', 'PayController@redirectGateway')
     ->middleware('shop.locale:en');
 

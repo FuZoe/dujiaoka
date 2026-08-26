@@ -15,7 +15,8 @@ class SetShopLocale
         // Payment pages keep their canonical /pay/* URL. The storefront
         // carries the selected language as a query parameter when entering
         // that route, so callbacks and provider integrations remain stable.
-        if ($locale === 'zh_CN' && $request->query('locale') === 'en') {
+        $requestedLocale = $request->query('locale');
+        if ($locale === 'zh_CN' && is_string($requestedLocale) && strtolower($requestedLocale) === 'en') {
             $locale = 'en';
         }
         $locale = $locale === 'en' ? 'en' : 'zh_CN';
