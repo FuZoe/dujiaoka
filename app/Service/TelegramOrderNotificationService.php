@@ -88,11 +88,14 @@ class TelegramOrderNotificationService
     public function buttons(Order $order, string $eventKey): array
     {
         $orderCallback = 'shop:order:'.strtoupper(trim((string) $order->order_sn));
-        if (trim((string) $order->getAttribute('telegram_chat_id')) !== ''
+        $customer = $order->customer;
+        $telegramOwned = trim((string) $order->getAttribute('telegram_chat_id')) !== ''
+            || ($customer && $customer->isTelegramBound());
+        if ($telegramOwned
             && strlen($orderCallback) <= 64
         ) {
-            // Bot-created customers do not have web-login credentials. Keep
-            // their status and delivery flow inside the private bot chat.
+            // A bound customer can query both bot-created and web-created
+            // orders in the private bot chat, without a second web login.
             $buttons = [[
                 'text' => '查看订单',
                 'callback_data' => $orderCallback,

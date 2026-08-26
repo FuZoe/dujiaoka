@@ -125,6 +125,18 @@ class TelegramOrderNotificationServiceTest extends TestCase
         $this->assertArrayNotHasKey('url', $button);
     }
 
+    public function test_web_order_for_bound_customer_also_opens_inside_telegram(): void
+    {
+        $customer = $this->customer('4006');
+        $order = $this->order($customer);
+
+        $button = app(TelegramOrderNotificationService::class)
+            ->buttons($order, 'paid')['inline_keyboard'][0][0];
+
+        $this->assertSame('shop:order:'.$order->order_sn, $button['callback_data']);
+        $this->assertArrayNotHasKey('url', $button);
+    }
+
     public function test_restock_and_private_job_targets_are_strictly_separated(): void
     {
         Cache::forever('system-setting', [
