@@ -40,6 +40,44 @@ class ShopApiClient
         ])['data'];
     }
 
+    /**
+     * List orders owned by one Telegram chat. The API validates the chat's
+     * customer binding; the bot must not rely on its local cache for this.
+     */
+    public function telegramOrders(string $chatId): array
+    {
+        return $this->request(
+            'GET',
+            '/api/v1/telegram/orders?chat_id='.rawurlencode(trim($chatId))
+        )['data'];
+    }
+
+    public function telegramOrder(string $orderSN, string $chatId): array
+    {
+        return $this->request(
+            'GET',
+            '/api/v1/telegram/orders/'.rawurlencode($orderSN).'?chat_id='.rawurlencode(trim($chatId))
+        )['data'];
+    }
+
+    public function telegramPay(string $orderSN, string $chatId, string $paymentMethod = ''): array
+    {
+        $payload = $paymentMethod !== '' ? ['payment_method' => $paymentMethod] : [];
+        return $this->request(
+            'POST',
+            '/api/v1/telegram/orders/'.rawurlencode($orderSN).'/pay?chat_id='.rawurlencode(trim($chatId)),
+            $payload
+        )['data'];
+    }
+
+    public function telegramDelivery(string $orderSN, string $chatId): array
+    {
+        return $this->request(
+            'GET',
+            '/api/v1/telegram/orders/'.rawurlencode($orderSN).'/delivery?chat_id='.rawurlencode(trim($chatId))
+        )['data'];
+    }
+
     public function pay(string $orderSN, string $paymentMethod = ''): array
     {
         $payload = $paymentMethod !== '' ? ['payment_method' => $paymentMethod] : [];

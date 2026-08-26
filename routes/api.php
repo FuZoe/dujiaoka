@@ -11,6 +11,10 @@ Route::prefix('v1')->middleware('shop.api')->namespace('Api\\V1')->group(functio
     Route::get('products', 'ShopApiController@products');
     Route::get('payment-methods', 'ShopApiController@paymentMethods');
     Route::post('orders', 'ShopApiController@createOrder');
+    Route::get('telegram/orders', 'ShopApiController@telegramOrders');
+    Route::get('telegram/orders/{orderSN}', 'ShopApiController@telegramOrder');
+    Route::post('telegram/orders/{orderSN}/pay', 'ShopApiController@telegramPay');
+    Route::get('telegram/orders/{orderSN}/delivery', 'ShopApiController@telegramDelivery');
     Route::get('orders/{orderSN}', 'ShopApiController@order');
     Route::post('orders/{orderSN}/pay', 'ShopApiController@pay');
     Route::get('orders/{orderSN}/delivery', 'ShopApiController@delivery');

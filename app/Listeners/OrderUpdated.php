@@ -45,7 +45,7 @@ class OrderUpdated
         ];
         $to = $event->order->email;
         // 邮件
-        if ($event->order->type == Order::MANUAL_PROCESSING) {
+        if ($event->order->type == Order::MANUAL_PROCESSING && $this->shouldSendCustomerEmail($event->order)) {
             switch ($event->order->status) {
                 case Order::STATUS_PENDING:
                     $mailtpl = Emailtpl::query()->where('tpl_token', 'pending_order')->first()->toArray();
@@ -61,6 +61,16 @@ class OrderUpdated
                     break;
             }
         }
+    }
+
+    private function shouldSendCustomerEmail(Order $order): bool
+    {
+        $email = strtolower(trim((string) $order->email));
+        if ($email === '' || trim((string) $order->getAttribute('telegram_chat_id')) !== '') {
+            return false;
+        }
+
+        return !preg_match('/@telegram\.newzoe\.cloud$/', $email);
     }
 
 

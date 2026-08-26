@@ -96,4 +96,36 @@ class ShopApiClientTest extends TestCase
 
         $this->assertSame('binancepay', $result['payment_methods'][0]['code']);
     }
+
+    public function test_it_signs_telegram_order_requests_with_chat_id_in_the_path(): void
+    {
+        config([
+            'services.shop_api.base_url' => 'https://shop.example.test',
+            'services.shop_api.key' => 'API_KEY',
+            'services.shop_api.secret' => 'API_SECRET',
+        ]);
+
+        $http = Mockery::mock(ClientInterface::class);
+        $http->shouldReceive('request')
+            ->once()
+            ->withArgs(function (string $method, string $url, array $options): bool {
+                $headers = $options['headers'];
+                $path = '/api/v1/telegram/orders?chat_id=1001';
+                $canonical = $method."\n".$path."\n"
+                    .$headers['X-Api-Timestamp']."\n"
+                    .$headers['X-Api-Nonce']."\n";
+
+                return $method === 'GET'
+                    && $url === 'https://shop.example.test'.$path
+                    && hash_hmac('sha256', $canonical, 'API_SECRET') === $headers['X-Api-Signature'];
+            })
+            ->andReturn(new Response(200, [], json_encode([
+                'ok' => true,
+                'data' => ['orders' => [['id' => 'TGORDER1']]],
+            ])));
+
+        $result = (new ShopApiClient($http))->telegramOrders('1001');
+
+        $this->assertSame('TGORDER1', $result['orders'][0]['id']);
+    }
 }

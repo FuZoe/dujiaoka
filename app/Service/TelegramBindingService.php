@@ -4,8 +4,10 @@ namespace App\Service;
 
 use App\Jobs\TelegramPrivateMessage;
 use App\Models\Customer;
+use App\Models\Order;
 use App\Models\TelegramBinding;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class TelegramBindingService
@@ -65,16 +67,51 @@ class TelegramBindingService
                 return ['status' => 'invalid'];
             }
 
-            Customer::query()
+            // A first-time bot checkout provisions a synthetic Customer so
+            // orders have a durable owner before the shopper creates a web
+            // account. When that shopper later consumes a binding link, move
+            // those orders to the logged-in account before releasing the
+            // synthetic chat owner. Real customer accounts keep their own
+            // historical orders when a chat is rebound.
+            $previousOwner = Customer::query()
                 ->where('telegram_chat_id', $chatId)
                 ->where('id', '!=', $customer->getKey())
-                ->update([
+                ->lockForUpdate()
+                ->first();
+
+            $hasChatColumn = Schema::hasColumn('orders', 'telegram_chat_id');
+            $orders = null;
+            if ($previousOwner && $this->isProvisionedCustomer($previousOwner, $chatId)) {
+                // Only synthetic bot owners are migrated. A normal account
+                // rebind releases its old chat without moving unrelated orders.
+                $orders = $hasChatColumn
+                    ? Order::query()->where('telegram_chat_id', $chatId)
+                    : Order::query()->whereRaw('1 = 0');
+                $orders->orWhere(function ($query) use ($previousOwner) {
+                    $query->where('customer_id', $previousOwner->getKey());
+                    // Older bot orders were created before the Telegram chat
+                    // column existed. Their synthetic email still identifies
+                    // the same chat and is safe to migrate because the prior
+                    // owner is verified as a provisioned Telegram account.
+                    $query->orWhere('email', $previousOwner->email);
+                });
+            }
+            if ($orders) {
+                $updates = ['customer_id' => $customer->getKey()];
+                if ($hasChatColumn) {
+                    $updates['telegram_chat_id'] = $chatId;
+                }
+                $orders->update($updates);
+            }
+
+            if ($previousOwner) {
+                $previousOwner->forceFill([
                     'telegram_chat_id' => null,
                     'telegram_username' => null,
                     'telegram_name' => null,
                     'telegram_bound_at' => null,
-                    'updated_at' => now(),
-                ]);
+                ])->save();
+            }
 
             $customer->telegram_chat_id = null;
             $customer->save();
@@ -106,6 +143,17 @@ class TelegramBindingService
         }
 
         return $result;
+    }
+
+    private function isProvisionedCustomer(Customer $customer, string $chatId): bool
+    {
+        // Synthetic accounts are identified by their reserved email shape.
+        // Do not require telegram_bound_at here: older bot-created rows may
+        // predate that marker but still own orders for this chat.
+        return hash_equals(
+            'telegram-'.$chatId.'@telegram.newzoe.cloud',
+            strtolower(trim((string) $customer->email))
+        );
     }
 
     public function unbind(Customer $customer): void

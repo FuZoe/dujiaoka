@@ -10,7 +10,7 @@
 
         @if(session('status'))<div class="account-notice">{{ session('status') }}</div>@endif
 
-        <section class="account-section telegram-status">
+        <section id="telegram-account" class="account-section telegram-status">
             <div>
                 <div class="eyebrow">Telegram 私聊通知</div>
                 <h2>{{ $customer->isTelegramBound() ? '已绑定' : '未绑定' }}</h2>

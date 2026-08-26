@@ -119,9 +119,9 @@ class TelegramShopBotServiceTest extends TestCase
                     'payment' => ['url' => 'https://pay.example.test/ORDER123'],
                 ];
             });
-        $api->shouldReceive('pay')
+        $api->shouldReceive('telegramPay')
             ->once()
-            ->with('ORDER123', 'binancepay')
+            ->with('ORDER123', '1003', 'binancepay')
             ->andReturn([
                 'payment_required' => true,
                 'payment' => [
@@ -241,6 +241,53 @@ class TelegramShopBotServiceTest extends TestCase
                 'message_id' => 90,
                 'chat' => ['id' => 1004, 'type' => 'private'],
             ],
+        ]);
+    }
+
+    public function test_checkout_uses_telegram_chat_without_email_or_lookup_password(): void
+    {
+        $api = Mockery::mock(ShopApiClient::class);
+        $api->shouldReceive('products')->once()->andReturn([
+            'products' => [['id' => 12, 'name' => '云服务套餐', 'price' => '9.90', 'stock' => 2]],
+        ]);
+        $api->shouldReceive('paymentMethods')->once()->andReturn([
+            'payment_methods' => [['code' => 'alipay', 'name' => '支付宝']],
+        ]);
+        $api->shouldReceive('createOrder')->once()->withArgs(function (array $payload, string $key): bool {
+            return $key !== ''
+                && $payload['product_id'] === 12
+                && $payload['quantity'] === 1
+                && $payload['payment_method'] === 'alipay'
+                && $payload['telegram_chat_id'] === '2010'
+                && !array_key_exists('email', $payload)
+                && !array_key_exists('search_password', $payload);
+        })->andReturn([
+            'order' => ['id' => 'TGORDER1', 'amount' => '9.90'],
+            'payment' => ['method' => 'alipay', 'url' => 'https://pay.example/TGORDER1'],
+        ]);
+
+        $telegram = Mockery::mock(TelegramBotClient::class);
+        $telegram->shouldReceive('editMessageText')->times(2)->withArgs(function (
+            string $token,
+            string $chatId,
+            int $messageId,
+            string $text,
+            array $payload
+        ): bool {
+            return $token === 'BOT_TOKEN'
+                && $chatId === '2010'
+                && strpos($text, '邮箱') === false
+                && strpos($text, '查单密码') === false;
+        });
+
+        $service = new TelegramShopBotService($api, $telegram);
+        $service->handleCallback([
+            'data' => 'shop:qty:12:1',
+            'message' => ['message_id' => 1, 'chat' => ['id' => 2010, 'type' => 'private']],
+        ]);
+        $service->handleCallback([
+            'data' => 'shop:method:alipay',
+            'message' => ['message_id' => 2, 'chat' => ['id' => 2010, 'type' => 'private']],
         ]);
     }
 

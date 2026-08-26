@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\BaseModel;
 use App\Models\BinancePaySetting;
 use App\Models\Carmis;
+use App\Models\Customer;
 use App\Models\Goods;
 use App\Models\Order;
 use App\Models\Pay;
@@ -21,6 +22,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 /**
  * Owner-facing, versioned shop API.
@@ -129,29 +133,40 @@ class ShopApiController extends Controller
             }
 
             $inputs = $validated['inputs'];
-            $internalData = [
-                'gid' => $validated['product_id'],
-                'email' => $validated['email'],
-                'payway' => $gateway->id,
-                'by_amount' => $validated['quantity'],
-                'search_pwd' => $validated['search_password'],
-                'coupon_code' => $validated['coupon_code'],
-            ];
-            foreach ($inputs as $field => $value) {
-                $internalData[$field] = $value;
-            }
-
-            $internalRequest = Request::create(
-                '/create-order',
-                'POST',
-                $internalData,
-                [],
-                [],
-                ['REMOTE_ADDR' => $request->getClientIp() ?: '127.0.0.1']
-            );
-
+            $telegramCustomer = null;
             DB::beginTransaction();
             try {
+                if ($validated['telegram_chat_id'] !== '') {
+                    $telegramCustomer = $this->resolveTelegramCustomer($validated);
+                    // Telegram checkout does not expose an email or lookup
+                    // password. Keep the legacy order columns populated with
+                    // a customer-owned identity while the chat ID remains
+                    // the authoritative lookup key for the bot.
+                    $validated['email'] = $telegramCustomer->email;
+                    if ($validated['search_password'] === '') {
+                        $validated['search_password'] = Str::random(24);
+                    }
+                }
+                $internalData = [
+                    'gid' => $validated['product_id'],
+                    'email' => $validated['email'],
+                    'payway' => $gateway->id,
+                    'by_amount' => $validated['quantity'],
+                    'search_pwd' => $validated['search_password'],
+                    'coupon_code' => $validated['coupon_code'],
+                ];
+                foreach ($inputs as $field => $value) {
+                    $internalData[$field] = $value;
+                }
+
+                $internalRequest = Request::create(
+                    '/create-order',
+                    'POST',
+                    $internalData,
+                    [],
+                    [],
+                    ['REMOTE_ADDR' => $request->getClientIp() ?: '127.0.0.1']
+                );
                 $this->orderService->validatorCreateOrder($internalRequest, true);
                 $this->orderService->validatorPayway($internalRequest);
                 $goods = $this->orderService->validatorGoods($internalRequest);
@@ -170,15 +185,25 @@ class ShopApiController extends Controller
                 $processor->setEmail($validated['email']);
                 $processor->setBuyIP($request->getClientIp() ?: '127.0.0.1');
                 $processor->setSearchPwd($validated['search_password']);
-                $processor->setCustomerId(null);
+                $processor->setCustomerId($telegramCustomer ? (int) $telegramCustomer->getKey() : null);
                 $order = $processor->createOrder();
+                if ($telegramCustomer && Schema::hasColumn('orders', 'telegram_chat_id')) {
+                    $order->telegram_chat_id = $validated['telegram_chat_id'];
+                    $order->save();
+                }
                 DB::commit();
             } catch (\Throwable $exception) {
                 DB::rollBack();
                 throw $exception;
             }
 
-            app(\App\Service\TelegramOrderNotificationService::class)->queueCreated($order);
+            // The shop bot already renders the creation response in the same
+            // chat. Avoid sending a duplicate "order created" notification;
+            // paid/status events are still queued by the normal settlement
+            // flow for bound Telegram customers.
+            if ($telegramCustomer === null) {
+                app(\App\Service\TelegramOrderNotificationService::class)->queueCreated($order);
+            }
             Cache::put($cacheKey, [
                 'fingerprint' => $fingerprint,
                 'order_sn' => $order->order_sn,
@@ -207,6 +232,74 @@ class ShopApiController extends Controller
         }
 
         return $this->success(['order' => $this->orderPayload($order)]);
+    }
+
+    /**
+     * Return only orders owned by the Telegram customer represented by chat_id.
+     * This endpoint is intentionally separate from the owner API order lookup;
+     * a bot user must never be able to enumerate another customer's order.
+     */
+    public function telegramOrders(Request $request)
+    {
+        $customer = $this->telegramCustomerFromRequest($request);
+        if ($customer === null) {
+            return $this->success(['orders' => []]);
+        }
+
+        $orders = Order::query()
+            ->with(['goods', 'pay'])
+            ->where(function ($query) use ($customer) {
+                if (!Schema::hasColumn('orders', 'telegram_chat_id')) {
+                    $query->where('customer_id', $customer->getKey());
+                    return;
+                }
+
+                $query->where(function ($owned) use ($customer) {
+                    $owned->where(function ($legacy) use ($customer) {
+                        $legacy->where('customer_id', $customer->getKey())
+                            ->whereNull('telegram_chat_id');
+                    })->orWhere('telegram_chat_id', $customer->telegram_chat_id);
+                });
+            })
+            ->latest('created_at')
+            ->limit(20)
+            ->get()
+            ->map(function (Order $order) {
+                return $this->orderPayload($order);
+            })
+            ->values()
+            ->all();
+
+        return $this->success(['orders' => $orders]);
+    }
+
+    public function telegramOrder(Request $request, string $orderSN)
+    {
+        $order = $this->telegramOrderFromRequest($request, $orderSN);
+        if ($order === null) {
+            return $this->failure('order_not_found', 'The order does not exist.', 404);
+        }
+
+        return $this->success(['order' => $this->orderPayload($order)]);
+    }
+
+    public function telegramPay(Request $request, string $orderSN)
+    {
+        if ($this->telegramOrderFromRequest($request, $orderSN) === null) {
+            return $this->failure('order_not_found', 'The order does not exist.', 404);
+        }
+
+        return $this->pay($request, $orderSN);
+    }
+
+    public function telegramDelivery(Request $request, string $orderSN)
+    {
+        $order = $this->telegramOrderFromRequest($request, $orderSN);
+        if ($order === null) {
+            return $this->failure('order_not_found', 'The order does not exist.', 404);
+        }
+
+        return $this->delivery($orderSN);
     }
 
     public function pay(Request $request, string $orderSN)
@@ -416,19 +509,29 @@ class ShopApiController extends Controller
             $inputs[$field] = (string) $value;
         }
 
+        $telegramChatId = trim((string) $request->input('telegram_chat_id', ''));
+        if ($telegramChatId !== '' && !preg_match('/^[1-9][0-9]{0,31}$/', $telegramChatId)) {
+            return $this->failure('validation_error', 'telegram_chat_id must be a private Telegram chat id.', 422);
+        }
+
+        $email = strtolower(trim((string) $request->input('email', '')));
         $validator = Validator::make([
             'product_id' => $productId,
             'quantity' => $quantity,
-            'email' => strtolower(trim((string) $request->input('email', ''))),
+            'email' => $email,
             'payment_method' => $paymentMethod,
             'search_password' => $request->input('search_password', $request->input('search_pwd', '')),
+            'telegram_chat_id' => $telegramChatId,
             'coupon_code' => $request->input('coupon_code', ''),
         ], [
             'product_id' => ['required', 'integer', 'min:1'],
             'quantity' => ['required', 'integer', 'min:1'],
-            'email' => ['required', 'email', 'max:200'],
+            'email' => $telegramChatId !== ''
+                ? ['nullable', 'email', 'max:200']
+                : ['required', 'email', 'max:200'],
             'payment_method' => ['required'],
             'search_password' => ['nullable', 'string', 'max:200'],
+            'telegram_chat_id' => ['nullable', 'string', 'regex:/^[1-9][0-9]{0,31}$/'],
             'coupon_code' => ['nullable', 'string', 'max:100'],
         ]);
         if ($validator->fails()) {
@@ -438,12 +541,87 @@ class ShopApiController extends Controller
         return [
             'product_id' => (int) $productId,
             'quantity' => (int) $quantity,
-            'email' => strtolower(trim((string) $request->input('email'))),
+            'email' => $email,
             'payment_method' => trim((string) $paymentMethod),
-            'search_password' => (string) $request->input('search_password', $request->input('search_pwd', '')),
+            'search_password' => trim((string) $request->input('search_password', $request->input('search_pwd', ''))),
+            'telegram_chat_id' => $telegramChatId,
             'coupon_code' => (string) $request->input('coupon_code', ''),
             'inputs' => $inputs,
         ];
+    }
+
+    /**
+     * Resolve or provision the customer represented by a Telegram chat ID.
+     * The surrounding create-order transaction serialises this operation so
+     * the unique telegram_chat_id/email constraints remain authoritative.
+     */
+    private function resolveTelegramCustomer(array $validated): Customer
+    {
+        $chatId = (string) $validated['telegram_chat_id'];
+        $customer = Customer::query()
+            ->where('telegram_chat_id', $chatId)
+            ->lockForUpdate()
+            ->first();
+        if ($customer) {
+            return $customer;
+        }
+
+        // A deterministic synthetic address lets a later web-account binding
+        // migrate these orders without exposing any customer email address.
+        $email = 'telegram-'.$chatId.'@telegram.newzoe.cloud';
+        $customer = Customer::query()
+            ->where('email', $email)
+            ->lockForUpdate()
+            ->first();
+        if (!$customer) {
+            $customer = Customer::query()->create([
+                'email' => $email,
+                'password' => Hash::make(Str::random(40)),
+            ]);
+        }
+
+        $customer->telegram_chat_id = $chatId;
+        $customer->telegram_bound_at = now();
+        $customer->save();
+
+        return $customer;
+    }
+
+    private function telegramCustomerFromRequest(Request $request): ?Customer
+    {
+        $chatId = trim((string) $request->query('chat_id', $request->input('chat_id', '')));
+        if (!preg_match('/^[1-9][0-9]{0,31}$/', $chatId)) {
+            return null;
+        }
+
+        return Customer::query()->where('telegram_chat_id', $chatId)->first();
+    }
+
+    private function telegramOrderFromRequest(Request $request, string $orderSN): ?Order
+    {
+        $customer = $this->telegramCustomerFromRequest($request);
+        if (!$customer) {
+            return null;
+        }
+
+        $order = $this->findOrder($orderSN);
+        if (!$order) {
+            return null;
+        }
+
+        if (!Schema::hasColumn('orders', 'telegram_chat_id')) {
+            return (int) $order->customer_id === (int) $customer->getKey() ? $order : null;
+        }
+
+        $ownedByChat = (string) $order->telegram_chat_id !== ''
+            && (string) $order->telegram_chat_id === (string) $customer->telegram_chat_id;
+        $legacyOwned = $order->telegram_chat_id === null
+            && (int) $order->customer_id === (int) $customer->getKey();
+        if (!$ownedByChat && !$legacyOwned) {
+            return null;
+        }
+
+        return $order;
     }
 
     private function resolveGateway($value)

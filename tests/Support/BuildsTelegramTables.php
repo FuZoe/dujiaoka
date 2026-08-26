@@ -24,6 +24,7 @@ trait BuildsTelegramTables
         Schema::create('orders', function (Blueprint $table) {
             $table->bigIncrements('id');
             $table->unsignedBigInteger('customer_id')->nullable()->index();
+            $table->string('telegram_chat_id', 32)->nullable()->index();
             $table->string('order_sn', 150)->unique();
             $table->unsignedBigInteger('goods_id')->default(1);
             $table->string('title', 200);

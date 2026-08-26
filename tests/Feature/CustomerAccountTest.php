@@ -80,4 +80,31 @@ class CustomerAccountTest extends TestCase
         $response->assertSee('https://t.me/newzoe_order_bot?start=bind_', false);
         $this->assertSame(1, TelegramBinding::query()->count());
     }
+
+    public function test_guest_navigation_exposes_telegram_binding_that_points_to_login(): void
+    {
+        $response = $this->get('/login');
+
+        $response->assertOk();
+        $response->assertSee('绑定 Telegram');
+        $response->assertSee('href="'.route('login').'"', false);
+    }
+
+    public function test_bound_customer_navigation_exposes_telegram_management(): void
+    {
+        $customer = Customer::query()->create([
+            'email' => 'bound-navigation@example.test',
+            'password' => bcrypt('test-password'),
+        ]);
+        $customer->forceFill([
+            'telegram_chat_id' => '3010',
+            'telegram_bound_at' => now(),
+        ])->save();
+
+        $response = $this->actingAs($customer)->get('/account');
+
+        $response->assertOk();
+        $response->assertSee('管理 Telegram');
+        $response->assertSee('href="'.route('account').'#telegram-account"', false);
+    }
 }

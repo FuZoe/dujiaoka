@@ -664,11 +664,23 @@ class OrderProcessService
             'buy_amount' => $order->buy_amount,
             'ord_price' => $order->actual_price,
         ];
-        $tpl = $this->emailtplService->detailByToken('card_send_user_email');
-        $mailBody = replace_mail_tpl($tpl, $mailData);
-        // 邮件发送
-        MailSend::dispatch($order->email, $mailBody['tpl_name'], $mailBody['tpl_content']);
+        if ($this->shouldSendCustomerEmail($order)) {
+            $tpl = $this->emailtplService->detailByToken('card_send_user_email');
+            $mailBody = replace_mail_tpl($tpl, $mailData);
+            // 邮件发送
+            MailSend::dispatch($order->email, $mailBody['tpl_name'], $mailBody['tpl_content']);
+        }
         return $order;
+    }
+
+    private function shouldSendCustomerEmail(Order $order): bool
+    {
+        $email = strtolower(trim((string) $order->email));
+        if ($email === '' || trim((string) $order->getAttribute('telegram_chat_id')) !== '') {
+            return false;
+        }
+
+        return !preg_match('/@telegram\.newzoe\.cloud$/', $email);
     }
 
 }

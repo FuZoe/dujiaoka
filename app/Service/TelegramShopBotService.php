@@ -292,24 +292,20 @@ class TelegramShopBotService
             return;
         }
 
-        $this->putState($chatId, [
-            'step' => 'email',
+        $fields = array_values($product['input_fields'] ?? []);
+        $state = [
+            'step' => $fields ? 'input' : 'payment',
             'product' => $product,
             'quantity' => $quantity,
             'inputs' => [],
             'input_index' => 0,
-        ]);
-        $this->respond(
-            $chatId,
-            $this->t($chatId, 'selected_email', [
-                'product' => (string) $product['name'],
-                'quantity' => $quantity,
-            ]),
-            ['inline_keyboard' => [[
-                ['text' => $this->t($chatId, 'cancel_order'), 'callback_data' => 'shop:cancel'],
-            ]]],
-            $origin
-        );
+        ];
+        $this->putState($chatId, $state);
+        if ($fields) {
+            $this->promptInput($chatId, $state, $origin);
+            return;
+        }
+        $this->showPaymentMethods($chatId, $origin);
     }
 
     private function acceptEmail(string $chatId, string $text, array $state): void
@@ -425,7 +421,10 @@ class TelegramShopBotService
             return;
         }
 
-        $text = $this->t($chatId, 'payment_select');
+        $text = $this->t($chatId, 'selected_order', [
+            'product' => (string) ($state['product']['name'] ?? $this->t($chatId, 'product_default')),
+            'quantity' => (int) ($state['quantity'] ?? 1),
+        ]);
         $keyboard = [];
         foreach ($methods as $method) {
             $code = (string) ($method['code'] ?? '');
@@ -463,11 +462,18 @@ class TelegramShopBotService
         $payload = [
             'product_id' => (int) $state['product']['id'],
             'quantity' => (int) $state['quantity'],
-            'email' => (string) $state['email'],
             'payment_method' => $method,
-            'search_password' => (string) ($state['search_password'] ?? ''),
+            'telegram_chat_id' => $chatId,
             'inputs' => (array) ($state['inputs'] ?? []),
         ];
+        // Keep accepting an in-flight legacy session created before the
+        // Telegram checkout changed to chat ownership.
+        if (!empty($state['email'])) {
+            $payload['email'] = (string) $state['email'];
+        }
+        if (!empty($state['search_password'])) {
+            $payload['search_password'] = (string) $state['search_password'];
+        }
         // Persist the key before the network call. Telegram can deliver the same
         // callback more than once, and a retry must replay the original order.
         $idempotencyKey = (string) ($state['idempotency_key'] ?? '');
@@ -505,7 +511,7 @@ class TelegramShopBotService
         if ($this->isBinancePayment($method)) {
             // The Binance checkout page is still available on the website, but
             // Telegram users receive the exact quote and QR code in-chat.
-            $paymentData = $this->api->pay($orderSN, $method);
+            $paymentData = $this->api->telegramPay($orderSN, $chatId, $method);
             if (array_key_exists('payment_required', $paymentData)
                 && !$paymentData['payment_required']
             ) {
@@ -550,7 +556,7 @@ class TelegramShopBotService
             return;
         }
 
-        $data = $this->api->order($orderSN);
+        $data = $this->api->telegramOrder($orderSN, $chatId);
         $order = (array) ($data['order'] ?? []);
         $status = (string) ($order['status'] ?? 'unknown');
         $text = $this->t($chatId, 'order_button', ['order' => $orderSN])."\n\n"
@@ -567,8 +573,9 @@ class TelegramShopBotService
         if ($status === 'wait_pay') {
             try {
                 $paymentMethod = (string) ($order['payment_method'] ?? '');
-                $paymentData = $this->api->pay(
+                $paymentData = $this->api->telegramPay(
                     $orderSN,
+                    $chatId,
                     $paymentMethod
                 );
                 if (array_key_exists('payment_required', $paymentData)
@@ -709,7 +716,7 @@ class TelegramShopBotService
             return;
         }
 
-        $data = $this->api->delivery($orderSN);
+        $data = $this->api->telegramDelivery($orderSN, $chatId);
         $delivery = (array) ($data['delivery'] ?? []);
         if (empty($delivery['available'])) {
             $this->respond(
@@ -782,7 +789,9 @@ class TelegramShopBotService
 
     private function rememberOrder(string $chatId, string $orderSN): void
     {
-        $orders = $this->ownedOrders($chatId);
+        // Do not make a second network call while handling the create-order
+        // response; the just-created order is already authoritative.
+        $orders = $this->ownedOrders($chatId, false);
         array_unshift($orders, strtoupper($orderSN));
         $orders = array_values(array_unique(array_slice($orders, 0, 10)));
         Cache::put(
@@ -792,19 +801,53 @@ class TelegramShopBotService
         );
     }
 
-    private function ownedOrders(string $chatId): array
+    private function ownedOrders(string $chatId, bool $refreshRemote = true): array
     {
-        return array_values(array_filter(
-            (array) Cache::get($this->ordersKey($chatId), []),
-            function ($orderSN) {
-                return preg_match('/^[A-Z0-9]{1,150}$/', (string) $orderSN) === 1;
+        $cached = (array) Cache::get($this->ordersKey($chatId), []);
+        $remote = [];
+        if ($refreshRemote) {
+            try {
+                $data = $this->api->telegramOrders($chatId);
+                foreach ((array) ($data['orders'] ?? []) as $order) {
+                    $orderSN = strtoupper(trim((string) ($order['id'] ?? '')));
+                    if ($orderSN !== '') {
+                        $remote[] = $orderSN;
+                    }
+                }
+            } catch (Throwable $exception) {
+                // A temporary API failure should not hide orders already
+                // cached for this chat. The next /orders refresh retries.
             }
-        ));
+        }
+
+        $orders = array_merge($remote, $cached);
+        $orders = array_values(array_unique(array_filter($orders, function ($orderSN) {
+            return is_string($orderSN)
+                && preg_match('/^[A-Z0-9]{1,150}$/', $orderSN) === 1;
+        })));
+        Cache::put(
+            $this->ordersKey($chatId),
+            array_slice($orders, 0, 20),
+            now()->addMinutes(self::ORDER_MINUTES)
+        );
+        return array_slice($orders, 0, 20);
     }
 
     private function ownsOrder(string $chatId, string $orderSN): bool
     {
-        return in_array(strtoupper(trim($orderSN)), $this->ownedOrders($chatId), true);
+        $orderSN = strtoupper(trim($orderSN));
+        if (in_array($orderSN, $this->ownedOrders($chatId, false), true)) {
+            return true;
+        }
+
+        // Cache expiry must not make a legitimate Telegram order disappear.
+        // The API performs the authoritative customer_id/chat_id check.
+        try {
+            $data = $this->api->telegramOrder($orderSN, $chatId);
+            return strtoupper(trim((string) ($data['order']['id'] ?? ''))) === $orderSN;
+        } catch (Throwable $exception) {
+            return false;
+        }
     }
 
     private function ordersKey(string $chatId): string
@@ -1079,6 +1122,7 @@ class TelegramShopBotService
                 'buy_quantity' => '购买 {quantity} 件',
                 'back_products' => '‹ 返回商品列表',
                 'quantity_changed' => '购买数量已经变化，请重新选择商品。',
+                'selected_order' => "已选择：{product} × {quantity}\n\n请选择支付方式：",
                 'selected_email' => "已选择：{product} × {quantity}\n\n请输入接收商品的邮箱：",
                 'cancel_order' => '取消下单',
                 'email_invalid' => '邮箱格式不正确，请重新输入：',
@@ -1129,7 +1173,7 @@ class TelegramShopBotService
                 'method_alipay' => '支付宝',
                 'method_usdt' => 'USDT',
                 'payment_method_default' => '支付方式 {code}',
-                'help_text' => "使用说明\n\n1. 浏览商品并选择购买数量\n2. 按提示填写邮箱和查单密码\n3. 选择支付方式，点击支付按钮完成付款\n4. 在“我的订单”里刷新状态，支付完成后查看发货内容\n\n订单有效期以订单页面显示为准。机器人只在私聊中处理订单和发货内容。",
+                'help_text' => "使用说明\n\n1. 浏览商品并选择购买数量\n2. 按提示填写商品所需信息（如有）\n3. 选择支付方式，点击支付按钮完成付款\n4. 在“我的订单”里刷新状态，支付完成后查看发货内容\n\n订单会自动绑定当前 Telegram 私聊，可直接在机器人查询。订单有效期以订单页面显示为准。",
                 'status_wait_pay' => '待支付',
                 'status_pending' => '待处理',
                 'status_processing' => '处理中',
@@ -1168,6 +1212,7 @@ class TelegramShopBotService
                 'buy_quantity' => 'Buy {quantity} item(s)',
                 'back_products' => '‹ Back to products',
                 'quantity_changed' => 'The available quantity has changed. Please choose again.',
+                'selected_order' => "Selected: {product} × {quantity}\n\nChoose a payment method:",
                 'selected_email' => "Selected: {product} × {quantity}\n\nEnter the email address for delivery:",
                 'cancel_order' => 'Cancel order',
                 'email_invalid' => 'Invalid email format. Please enter it again:',
@@ -1218,7 +1263,7 @@ class TelegramShopBotService
                 'method_alipay' => 'Alipay',
                 'method_usdt' => 'USDT',
                 'payment_method_default' => 'Payment method {code}',
-                'help_text' => "Help\n\n1. Browse products and choose a quantity\n2. Enter your email and order lookup password\n3. Choose a payment method and click the payment button to pay\n4. Refresh status in “My orders”; view delivery content after payment is complete\n\nOrder validity follows the deadline shown on the order page. The bot handles orders and delivery content only in private chats.",
+                'help_text' => "Help\n\n1. Browse products and choose a quantity\n2. Enter any product information requested (if applicable)\n3. Choose a payment method and click the payment button to pay\n4. Refresh status in “My orders”; view delivery content after payment is complete\n\nOrders are automatically linked to this Telegram chat and can be queried in the bot. Order validity follows the deadline shown on the order page.",
                 'status_wait_pay' => 'Awaiting payment',
                 'status_pending' => 'Pending',
                 'status_processing' => 'Processing',
@@ -1257,6 +1302,7 @@ class TelegramShopBotService
                 'buy_quantity' => 'Mua {quantity} sản phẩm',
                 'back_products' => '‹ Quay lại danh sách',
                 'quantity_changed' => 'Số lượng mua đã thay đổi. Vui lòng chọn lại.',
+                'selected_order' => "Đã chọn: {product} × {quantity}\n\nChọn phương thức thanh toán:",
                 'selected_email' => "Đã chọn: {product} × {quantity}\n\nNhập email nhận sản phẩm:",
                 'cancel_order' => 'Hủy đặt hàng',
                 'email_invalid' => 'Email không hợp lệ. Vui lòng nhập lại:',
@@ -1307,7 +1353,7 @@ class TelegramShopBotService
                 'method_alipay' => 'Thanh toán Alipay',
                 'method_usdt' => 'USDT',
                 'payment_method_default' => 'Phương thức thanh toán {code}',
-                'help_text' => "Hướng dẫn\n\n1. Duyệt sản phẩm và chọn số lượng\n2. Nhập email và mật khẩu tra cứu đơn hàng\n3. Chọn phương thức thanh toán và nhấn nút thanh toán\n4. Làm mới trạng thái trong “Đơn hàng của tôi”; xem nội dung giao hàng sau khi thanh toán hoàn tất\n\nThời hạn đơn hàng theo thời hạn hiển thị trên trang đơn hàng. Bot chỉ xử lý đơn hàng và nội dung giao hàng trong trò chuyện riêng tư.",
+                'help_text' => "Hướng dẫn\n\n1. Duyệt sản phẩm và chọn số lượng\n2. Nhập thông tin sản phẩm được yêu cầu (nếu có)\n3. Chọn phương thức thanh toán và nhấn nút thanh toán\n4. Làm mới trạng thái trong “Đơn hàng của tôi”; xem nội dung giao hàng sau khi thanh toán hoàn tất\n\nĐơn hàng tự động liên kết với cuộc trò chuyện Telegram này và có thể tra cứu ngay trong bot. Thời hạn đơn hàng theo thời hạn hiển thị trên trang đơn hàng.",
                 'status_wait_pay' => 'Chờ thanh toán',
                 'status_pending' => 'Đang chờ xử lý',
                 'status_processing' => 'Đang xử lý',

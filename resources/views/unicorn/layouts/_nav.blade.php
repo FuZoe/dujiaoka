@@ -11,10 +11,13 @@
             <a class="@if(\Illuminate\Support\Facades\Request::url() == url('order-search')) active @endif" href="{{ url('order-search') }}">查订单</a>
             @auth
                 <a class="@if(\Illuminate\Support\Facades\Request::is('account*')) active @endif" href="{{ route('account') }}">账户</a>
-                @if(!auth()->user()->isTelegramBound())
+                @if(auth()->user()->isTelegramBound())
+                    <a class="telegram-nav-link" href="{{ route('account') }}#telegram-account">管理 Telegram</a>
+                @else
                     <a class="telegram-nav-link" href="{{ route('telegram.bind') }}">绑定 Telegram</a>
                 @endif
             @else
+                <a class="telegram-nav-link" href="{{ route('login') }}">绑定 Telegram</a>
                 <a class="@if(\Illuminate\Support\Facades\Request::is('login') || \Illuminate\Support\Facades\Request::is('register')) active @endif" href="{{ route('login') }}">登录</a>
             @endauth
         </nav>

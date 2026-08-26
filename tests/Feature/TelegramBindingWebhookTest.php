@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Jobs\TelegramPrivateMessage;
 use App\Jobs\TelegramShopInteraction;
 use App\Models\Customer;
+use App\Models\Order;
 use App\Models\TelegramBinding;
 use App\Service\TelegramBotClient;
 use App\Service\TelegramBindingService;
@@ -90,6 +91,44 @@ class TelegramBindingWebhookTest extends TestCase
         $this->assertNull($first->refresh()->telegram_chat_id);
         $this->assertSame('2001', $second->refresh()->telegram_chat_id);
         $this->assertSame(1, Customer::query()->where('telegram_chat_id', '2001')->count());
+    }
+
+    public function test_binding_migrates_orders_from_a_bot_provisioned_customer(): void
+    {
+        $service = app(TelegramBindingService::class);
+        $provisioned = $this->customer('telegram-2010@telegram.newzoe.cloud');
+        $provisioned->forceFill([
+            'telegram_chat_id' => '2010',
+            'telegram_bound_at' => now(),
+        ])->save();
+        $order = new Order();
+        $order->customer_id = $provisioned->getKey();
+        $order->order_sn = 'BOTORDER2010';
+        $order->goods_id = 1;
+        $order->title = 'Bot product';
+        $order->type = 1;
+        $order->goods_price = 1;
+        $order->buy_amount = 1;
+        $order->actual_price = 1;
+        $order->search_pwd = '';
+        $order->email = $provisioned->email;
+        $order->buy_ip = '127.0.0.1';
+        $order->trade_no = '';
+        $order->status = Order::STATUS_WAIT_PAY;
+        $order->save();
+
+        $target = $this->customer('web-owner@example.test');
+        [, $token] = $service->issue($target);
+        $result = $service->consume(
+            $token,
+            ['id' => 2010, 'type' => 'private'],
+            ['id' => 2010, 'username' => 'web_owner']
+        );
+
+        $this->assertSame('bound', $result['status']);
+        $this->assertSame($target->getKey(), $order->refresh()->customer_id);
+        $this->assertNull($provisioned->refresh()->telegram_chat_id);
+        $this->assertSame('2010', $target->refresh()->telegram_chat_id);
     }
 
     public function test_webhook_rejects_forged_secret_and_accepts_valid_private_start(): void
