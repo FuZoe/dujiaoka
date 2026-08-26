@@ -83,6 +83,44 @@ class TelegramShopBotServiceTest extends TestCase
         ]);
     }
 
+    public function test_order_callback_reuses_the_authoritative_order_lookup(): void
+    {
+        $api = Mockery::mock(ShopApiClient::class);
+        $api->shouldReceive('telegramOrder')
+            ->once()
+            ->with('ORDER1006', '1006')
+            ->andReturn([
+                'order' => [
+                    'id' => 'ORDER1006',
+                    'status' => 'completed',
+                    'amount' => '9.90',
+                    'quantity' => 1,
+                    'product' => ['name' => '云服务套餐'],
+                ],
+            ]);
+        $api->shouldNotReceive('telegramPay');
+
+        $telegram = Mockery::mock(TelegramBotClient::class);
+        $telegram->shouldReceive('editMessageText')
+            ->once()
+            ->withArgs(function (string $token, string $chatId, int $messageId, string $text, array $payload): bool {
+                $buttons = $payload['reply_markup']['inline_keyboard'] ?? [];
+                return $token === 'BOT_TOKEN'
+                    && $chatId === '1006'
+                    && $messageId === 46
+                    && strpos($text, 'ORDER1006') !== false
+                    && $buttons[0][0]['callback_data'] === 'shop:delivery:ORDER1006';
+            });
+
+        (new TelegramShopBotService($api, $telegram))->handleCallback([
+            'data' => 'shop:order:ORDER1006',
+            'message' => [
+                'message_id' => 46,
+                'chat' => ['id' => 1006, 'type' => 'private'],
+            ],
+        ]);
+    }
+
     public function test_products_callback_renders_product_buttons_with_stock_and_pagination(): void
     {
         $api = Mockery::mock(ShopApiClient::class);

@@ -4,6 +4,7 @@ namespace App\Service;
 
 use App\Service\ShopApiClient;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 use SimpleSoftwareIO\QrCode\Facades\QrCode;
@@ -551,13 +552,12 @@ class TelegramShopBotService
 
     private function showOrder(string $chatId, string $orderSN, array $origin = []): void
     {
-        if (!$this->ownsOrder($chatId, $orderSN)) {
+        $order = $this->ownedOrder($chatId, $orderSN);
+        if ($order === null) {
             $this->respond($chatId, $this->t($chatId, 'wrong_order'), $this->homeKeyboard($chatId), $origin);
             return;
         }
 
-        $data = $this->api->telegramOrder($orderSN, $chatId);
-        $order = (array) ($data['order'] ?? []);
         $status = (string) ($order['status'] ?? 'unknown');
         $text = $this->t($chatId, 'order_button', ['order' => $orderSN])."\n\n"
             .$this->t($chatId, 'status_label').' '.$this->statusLabel($status, $chatId)."\n"
@@ -835,6 +835,15 @@ class TelegramShopBotService
 
     private function ownsOrder(string $chatId, string $orderSN): bool
     {
+        return $this->ownedOrder($chatId, $orderSN) !== null;
+    }
+
+    /**
+     * Fetch and validate an order once. The signed API remains the source of
+     * truth for chat ownership, while callers that need the order can reuse it.
+     */
+    private function ownedOrder(string $chatId, string $orderSN): ?array
+    {
         $orderSN = strtoupper(trim($orderSN));
         // The local order list is only a rendering cache. A chat can be
         // rebound while that cache is still alive, so never use it as an
@@ -842,9 +851,12 @@ class TelegramShopBotService
         // customer_id/chat_id check on every order action.
         try {
             $data = $this->api->telegramOrder($orderSN, $chatId);
-            return strtoupper(trim((string) ($data['order']['id'] ?? ''))) === $orderSN;
+            $order = (array) ($data['order'] ?? []);
+            return strtoupper(trim((string) ($order['id'] ?? ''))) === $orderSN
+                ? $order
+                : null;
         } catch (Throwable $exception) {
-            return false;
+            return null;
         }
     }
 
@@ -1392,6 +1404,12 @@ class TelegramShopBotService
 
     private function reportApiFailure(Throwable $exception): void
     {
-        report($exception);
+        // Exception traces include method arguments in this PHP runtime. Do
+        // not pass Telegram transport exceptions to the reporter because that
+        // can write the bot token into the application log.
+        Log::warning('Telegram shop request failed.', [
+            'exception' => get_class($exception),
+            'code' => (int) $exception->getCode(),
+        ]);
     }
 }

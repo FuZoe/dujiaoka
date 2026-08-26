@@ -6,6 +6,7 @@ use App\Jobs\TelegramShopInteraction;
 use App\Service\TelegramBotClient;
 use App\Service\TelegramBindingService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class TelegramWebhookController extends Controller
 {
@@ -20,6 +21,12 @@ class TelegramWebhookController extends Controller
         $message = $request->input('message', []);
         $text = trim((string) ($message['text'] ?? ''));
         if (!preg_match('/^\/start(?:@[A-Za-z0-9_]+)? bind_([A-Za-z0-9_-]{43})$/', $text, $matches)) {
+            if ($request->has('message') || $request->has('callback_query')) {
+                // Put interactive work on its dedicated queue before best-effort
+                // acknowledgement so a slow Telegram API call cannot delay it.
+                TelegramShopInteraction::dispatch($request->all());
+            }
+
             $callbackQuery = $request->input('callback_query', []);
             if (isset($callbackQuery['id'])) {
                 try {
@@ -28,11 +35,10 @@ class TelegramWebhookController extends Controller
                         (string) $callbackQuery['id']
                     );
                 } catch (\Throwable $exception) {
-                    report($exception);
+                    Log::warning('Telegram callback acknowledgement failed.', [
+                        'exception' => get_class($exception),
+                    ]);
                 }
-            }
-            if ($request->has('message') || $request->has('callback_query')) {
-                TelegramShopInteraction::dispatch($request->all());
             }
             return response()->json(['ok' => true]);
         }

@@ -15,6 +15,8 @@ class TelegramShopInteraction implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
+    public const QUEUE = 'telegram-interactions';
+
     public $tries = 2;
     public $timeout = 30;
 
@@ -23,6 +25,7 @@ class TelegramShopInteraction implements ShouldQueue
     public function __construct(array $update)
     {
         $this->update = $update;
+        $this->onQueue(self::QUEUE);
     }
 
     public function handle(TelegramShopBotService $shop): void

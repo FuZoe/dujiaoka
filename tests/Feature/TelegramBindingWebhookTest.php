@@ -11,6 +11,7 @@ use App\Service\TelegramBotClient;
 use App\Service\TelegramBindingService;
 use Illuminate\Support\Facades\Queue;
 use Mockery;
+use RuntimeException;
 use Tests\Support\BuildsTelegramTables;
 use Tests\TestCase;
 
@@ -188,7 +189,36 @@ class TelegramBindingWebhookTest extends TestCase
             'X-Telegram-Bot-Api-Secret-Token' => 'WEBHOOK_SECRET',
         ])->assertOk()->assertJson(['ok' => true]);
 
-        Queue::assertPushed(TelegramShopInteraction::class, 1);
+        Queue::assertPushed(TelegramShopInteraction::class, function (TelegramShopInteraction $job): bool {
+            return $job->queue === TelegramShopInteraction::QUEUE;
+        });
+    }
+
+    public function test_callback_is_queued_even_when_telegram_acknowledgement_fails(): void
+    {
+        $client = Mockery::mock(TelegramBotClient::class);
+        $client->shouldReceive('answerCallbackQuery')
+            ->once()
+            ->andThrow(new RuntimeException('transport failure'));
+        $this->app->instance(TelegramBotClient::class, $client);
+
+        $this->postJson('/api/telegram/webhook', [
+            'update_id' => 9002,
+            'callback_query' => [
+                'id' => 'callback-124',
+                'data' => 'shop:products:0',
+                'message' => [
+                    'message_id' => 56,
+                    'chat' => ['id' => 3003, 'type' => 'private'],
+                ],
+            ],
+        ], [
+            'X-Telegram-Bot-Api-Secret-Token' => 'WEBHOOK_SECRET',
+        ])->assertOk()->assertJson(['ok' => true]);
+
+        Queue::assertPushed(TelegramShopInteraction::class, function (TelegramShopInteraction $job): bool {
+            return $job->queue === TelegramShopInteraction::QUEUE;
+        });
     }
 
     private function customer(string $email): Customer
