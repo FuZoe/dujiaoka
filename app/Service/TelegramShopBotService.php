@@ -836,12 +836,10 @@ class TelegramShopBotService
     private function ownsOrder(string $chatId, string $orderSN): bool
     {
         $orderSN = strtoupper(trim($orderSN));
-        if (in_array($orderSN, $this->ownedOrders($chatId, false), true)) {
-            return true;
-        }
-
-        // Cache expiry must not make a legitimate Telegram order disappear.
-        // The API performs the authoritative customer_id/chat_id check.
+        // The local order list is only a rendering cache. A chat can be
+        // rebound while that cache is still alive, so never use it as an
+        // authorization decision. The signed API performs the authoritative
+        // customer_id/chat_id check on every order action.
         try {
             $data = $this->api->telegramOrder($orderSN, $chatId);
             return strtoupper(trim((string) ($data['order']['id'] ?? ''))) === $orderSN;

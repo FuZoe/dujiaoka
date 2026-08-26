@@ -54,6 +54,35 @@ class TelegramShopBotServiceTest extends TestCase
         ]);
     }
 
+    public function test_cached_order_is_rechecked_after_a_chat_rebind(): void
+    {
+        $api = Mockery::mock(ShopApiClient::class);
+        $api->shouldReceive('telegramOrder')
+            ->once()
+            ->with('STALEORDER', '1005')
+            ->andThrow(new RuntimeException('order_not_found'));
+
+        Cache::put('telegram-shop:orders:1005', ['STALEORDER'], now()->addHours(48));
+
+        $telegram = Mockery::mock(TelegramBotClient::class);
+        $telegram->shouldReceive('editMessageText')
+            ->once()
+            ->withArgs(function (string $token, string $chatId, int $messageId, string $text, array $payload): bool {
+                return $token === 'BOT_TOKEN'
+                    && $chatId === '1005'
+                    && $messageId === 44
+                    && strpos($text, '不属于') !== false;
+            });
+
+        (new TelegramShopBotService($api, $telegram))->handleCallback([
+            'data' => 'shop:order:STALEORDER',
+            'message' => [
+                'message_id' => 44,
+                'chat' => ['id' => 1005, 'type' => 'private'],
+            ],
+        ]);
+    }
+
     public function test_products_callback_renders_product_buttons_with_stock_and_pagination(): void
     {
         $api = Mockery::mock(ShopApiClient::class);
