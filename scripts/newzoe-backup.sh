@@ -134,14 +134,19 @@ run_preflight() {
 run_backup() {
     require_root
     load_configuration
-    check_remote
-
     install -d -m 700 "${STATE_DIR}" "${STATE_DIR}/cache" "${LOG_DIR}"
     exec 9>"${LOCK_FILE}"
     flock -n 9 || {
         log "Another backup is already running; skipping this invocation"
         exit 0
     }
+
+    check_remote
+
+    # A forced stop can bypass EXIT traps. Remove old staging directories once
+    # the backup lock proves that no other backup run is using them.
+    find "${STATE_DIR}/runs" -mindepth 1 -maxdepth 1 -type d -mmin +30 \
+        -exec rm -rf -- {} + 2>/dev/null || true
 
     local run_id run_dir log_file
     run_id="$(date +%Y%m%dT%H%M%SZ)"
@@ -152,7 +157,15 @@ run_backup() {
     chmod 600 "${log_file}"
     exec > >(tee -a "${log_file}") 2>&1
 
-    trap 'rm -rf "${run_dir}"' EXIT
+    cleanup_run() {
+        local status=$?
+        if [[ -n "${run_dir:-}" && -d "${run_dir}" ]]; then
+            rm -rf -- "${run_dir}"
+        fi
+        trap - EXIT INT TERM
+        exit "${status}"
+    }
+    trap cleanup_run EXIT INT TERM
 
     log "Starting encrypted offsite backup run ${run_id}"
     dump_mariadb "${run_dir}/dujiaoka-mariadb.sql"
