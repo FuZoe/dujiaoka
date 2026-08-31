@@ -9,6 +9,8 @@ use App\Service\GoodsService;
 use App\Service\OrderProcessService;
 use App\Service\OrderService;
 use App\Service\PayService;
+use App\Service\RestockNotificationService;
+use App\Models\Goods;
 use Illuminate\Support\ServiceProvider;
 use Jenssegers\Agent\Agent;
 
@@ -55,6 +57,20 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot()
     {
+        // Card imports reset the sold-out cycle for automatic-delivery goods.
+        // Manual goods are replenished by editing in_stock directly, so reset
+        // their cycle when an admin moves inventory back above zero.
+        Goods::saved(function (Goods $goods) {
+            if ((int) $goods->type !== Goods::MANUAL_PROCESSING
+                || !$goods->wasChanged('in_stock')) {
+                return;
+            }
 
+            $stockBefore = (int) $goods->getOriginal('in_stock');
+            $stockAfter = (int) $goods->in_stock;
+            if ($stockBefore <= 0 && $stockAfter > 0) {
+                app(RestockNotificationService::class)->clearOutOfStockNotification($goods);
+            }
+        });
     }
 }

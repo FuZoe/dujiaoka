@@ -452,6 +452,15 @@ class OrderProcessService
                 }
                 $order->coupon_ret_back = Order::COUPON_BACK_WAIT;
             }
+            // Capture inventory before fulfillment. The alert is dispatched
+            // only after the surrounding transaction commits, so a delivery
+            // rollback cannot produce a false sold-out email.
+            $stockNotifications = app(RestockNotificationService::class);
+            $stockBefore = $stockNotifications->isOutOfStockEmailEnabled()
+                && $order->goods instanceof Goods
+                ? $stockNotifications->availableStock($order->goods)
+                : null;
+            $stockAfter = null;
             $order->actual_price = $actualPrice;
             $order->trade_no = $tradeNo;
             // 区分订单类型
@@ -488,7 +497,18 @@ class OrderProcessService
                 ], true)) {
                     $this->goodsService->salesVolumeIncr($order->goods_id, $order->buy_amount);
                 }
+                if ($stockBefore !== null) {
+                    $stockAfter = $stockNotifications->availableStock($order->goods);
+                }
                 DB::commit();
+                if ($stockBefore !== null && $stockAfter !== null) {
+                    $stockNotifications->dispatchForOutOfStock(
+                        $order->goods,
+                        $stockBefore,
+                        $stockAfter,
+                        $order->order_sn
+                    );
+                }
             }
             $telegramOrders = app(TelegramOrderNotificationService::class);
             $telegramOrders->queuePaid($completedOrder);

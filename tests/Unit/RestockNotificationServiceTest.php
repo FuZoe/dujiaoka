@@ -3,8 +3,12 @@
 namespace Tests\Unit;
 
 use App\Jobs\TelegramRestockNotification;
+use App\Jobs\EmailRestockNotification;
+use App\Jobs\EmailOutOfStockNotification;
+use App\Jobs\EmailStockNotification;
 use App\Models\Goods;
 use App\Service\RestockNotificationService;
+use App\Service\SystemSettingStore;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
@@ -15,6 +19,9 @@ class RestockNotificationServiceTest extends TestCase
     {
         parent::setUp();
         Cache::flush();
+        $settings = new \ReflectionProperty(SystemSettingStore::class, 'settings');
+        $settings->setAccessible(true);
+        $settings->setValue(null, null);
         config(['app.url' => 'https://shop.example.test']);
     }
 
@@ -62,6 +69,132 @@ class RestockNotificationServiceTest extends TestCase
 
         $this->assertTrue($queued);
         Queue::assertPushed(TelegramRestockNotification::class, 1);
+    }
+
+    public function test_it_queues_an_email_without_telegram_configuration(): void
+    {
+        Queue::fake();
+        Cache::forever('system-setting', [
+            'is_open_email_restock' => 1,
+            'email_restock_recipient' => 'fxq45@qq.com',
+            'driver' => 'array',
+        ]);
+
+        $queued = (new RestockNotificationService())->dispatchForImport(
+            $this->goods(),
+            0,
+            2,
+            2,
+            'email-only-batch'
+        );
+
+        $this->assertTrue($queued);
+        Queue::assertPushed(EmailRestockNotification::class, function (EmailRestockNotification $job) {
+            return $job->batchId() === 'email-only-batch'
+                && $job->recipient() === 'fxq45@qq.com';
+        });
+        Queue::assertNotPushed(TelegramRestockNotification::class);
+    }
+
+    public function test_it_does_not_enqueue_the_same_email_batch_twice(): void
+    {
+        Queue::fake();
+        Cache::forever('system-setting', [
+            'is_open_email_restock' => 1,
+            'email_restock_recipient' => 'fxq45@qq.com',
+            'driver' => 'array',
+        ]);
+        $service = new RestockNotificationService();
+
+        $this->assertTrue($service->dispatchForImport($this->goods(), 0, 2, 2, 'duplicate-batch'));
+        $this->assertFalse($service->dispatchForImport($this->goods(), 0, 2, 2, 'duplicate-batch'));
+        Queue::assertPushed(EmailRestockNotification::class, 1);
+    }
+
+    /**
+     * @dataProvider outOfStockConditions
+     */
+    public function test_it_only_alerts_when_stock_crosses_to_zero(
+        int $before,
+        int $after,
+        bool $expected
+    ): void {
+        $this->assertSame(
+            $expected,
+            (new RestockNotificationService())->shouldNotifyOutOfStock($before, $after)
+        );
+    }
+
+    public function outOfStockConditions(): array
+    {
+        return [
+            'last item sold' => [1, 0, true],
+            'multiple items sold' => [3, 0, true],
+            'still stocked' => [3, 1, false],
+            'already empty' => [0, 0, false],
+            'invalid negative before' => [-1, 0, false],
+        ];
+    }
+
+    public function test_it_queues_one_sold_out_email_per_product_cycle(): void
+    {
+        Queue::fake();
+        Cache::forever('system-setting', [
+            'is_open_email_out_of_stock' => 1,
+            'email_restock_recipient' => 'fxq45@qq.com',
+            'driver' => 'array',
+        ]);
+        $service = new RestockNotificationService();
+        $goods = $this->goods();
+
+        $this->assertTrue($service->dispatchForOutOfStock($goods, 1, 0, 'order-one'));
+        $this->assertFalse($service->dispatchForOutOfStock($goods, 1, 0, 'order-two'));
+        Queue::assertPushed(EmailOutOfStockNotification::class, 1);
+    }
+
+    public function test_restock_clears_the_sold_out_marker_for_the_next_cycle(): void
+    {
+        Queue::fake();
+        Cache::forever('system-setting', [
+            'is_open_email_out_of_stock' => 1,
+            'is_open_email_restock' => 0,
+            'email_restock_recipient' => 'fxq45@qq.com',
+            'driver' => 'array',
+        ]);
+        $service = new RestockNotificationService();
+        $goods = $this->goods();
+
+        $this->assertTrue($service->dispatchForOutOfStock($goods, 1, 0, 'order-one'));
+        $service->clearOutOfStockNotification($goods);
+        $this->assertTrue($service->dispatchForOutOfStock($goods, 1, 0, 'order-two'));
+        Queue::assertPushed(EmailOutOfStockNotification::class, 2);
+    }
+
+    public function test_sold_out_email_contains_safe_product_details(): void
+    {
+        $goods = $this->goods();
+        $goods->gd_name = '<商品> & 测试';
+
+        [$title, $content] = (new RestockNotificationService())->buildOutOfStockEmail($goods);
+
+        $this->assertStringContainsString('已售罄', $title);
+        $this->assertStringContainsString('&lt;商品&gt; &amp; 测试', $content);
+        $this->assertStringNotContainsString('<商品>', $content);
+        $this->assertStringContainsString('https://shop.example.test/buy/42', $content);
+    }
+
+    public function test_email_message_escapes_product_values(): void
+    {
+        config(['app.url' => 'https://shop.example.test']);
+        $goods = $this->goods();
+        $goods->gd_name = '<商品> & 测试';
+
+        [$title, $content] = (new RestockNotificationService())->buildEmail($goods, 4);
+
+        $this->assertStringContainsString('库存通知', $title);
+        $this->assertStringContainsString('&lt;商品&gt; &amp; 测试', $content);
+        $this->assertStringNotContainsString('<商品>', $content);
+        $this->assertStringContainsString('https://shop.example.test/buy/42', $content);
     }
 
     /** @dataProvider validTargets */

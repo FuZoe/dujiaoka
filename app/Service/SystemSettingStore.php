@@ -47,6 +47,20 @@ class SystemSettingStore
         return self::$settings;
     }
 
+    /**
+     * Reload settings from the shared cache/persistent store.
+     *
+     * Queue workers are long-lived, so a static in-process snapshot can outlive
+     * an admin change. Callers that run in a worker should use this method when
+     * the latest switches or mail credentials are required.
+     */
+    public static function refresh(): array
+    {
+        self::$settings = null;
+
+        return self::all();
+    }
+
     public static function get(string $key, $default = null)
     {
         $settings = self::all();

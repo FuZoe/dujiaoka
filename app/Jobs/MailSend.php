@@ -5,11 +5,9 @@ namespace App\Jobs;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
-use Illuminate\Mail\MailServiceProvider;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Illuminate\Support\Facades\Mail;
-use App\Service\SystemSettingStore;
+use App\Service\ConfiguredMailSender;
 
 class MailSend implements ShouldQueue
 {
@@ -56,35 +54,6 @@ class MailSend implements ShouldQueue
      */
     public function handle()
     {
-        $body = $this->content;
-        $title = $this->title;
-        $sysConfig = SystemSettingStore::all();
-        $mailConfig = [
-            'driver' => $sysConfig['driver'] ?? 'smtp',
-            'host' => $sysConfig['host'] ?? '',
-            'port' => $sysConfig['port'] ?? '465',
-            'username' => $sysConfig['username'] ?? '',
-            'from'      =>  [
-                'address'   =>   $sysConfig['from_address'] ?? '',
-                'name'      =>  $sysConfig['from_name'] ?? '独角发卡'
-            ],
-            'password' => $sysConfig['password'] ?? '',
-            'encryption' => $sysConfig['encryption'] ?? ''
-        ];
-        $to = $this->to;
-        //  覆盖 mail 配置
-        config([
-            'mail'  =>  array_merge(config('mail'), $mailConfig)
-        ]);
-        // Queue workers are long-lived. Drop mail instances so every job uses the
-        // latest settings saved in the admin panel.
-        foreach (['mailer', 'swift.mailer', 'swift.transport'] as $service) {
-            app()->forgetInstance($service);
-        }
-        Mail::clearResolvedInstance('mailer');
-        (new MailServiceProvider(app()))->register();
-        Mail::send(['html' => 'email.mail'], ['body' => $body], function ($message) use ($to, $title){
-            $message->to($to)->subject($title);
-        });
+        app(ConfiguredMailSender::class)->send($this->to, $this->title, $this->content);
     }
 }

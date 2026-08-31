@@ -75,6 +75,16 @@ class SystemSetting extends Form
             $this->switch('is_open_telegram_restock', admin_trans('system-setting.fields.is_open_telegram_restock'))
                 ->default(BaseModel::STATUS_CLOSE)
                 ->help(admin_trans('system-setting.helps.is_open_telegram_restock'));
+            $this->switch('is_open_email_restock', admin_trans('system-setting.fields.is_open_email_restock'))
+                ->default(BaseModel::STATUS_CLOSE)
+                ->help(admin_trans('system-setting.helps.is_open_email_restock'));
+            $this->switch('is_open_email_out_of_stock', admin_trans('system-setting.fields.is_open_email_out_of_stock'))
+                ->default(BaseModel::STATUS_OPEN)
+                ->help(admin_trans('system-setting.helps.is_open_email_out_of_stock'));
+            $this->text('email_restock_recipient', admin_trans('system-setting.fields.email_restock_recipient'))
+                ->default('fxq45@qq.com')
+                ->rules('nullable|email')
+                ->help(admin_trans('system-setting.helps.email_restock_recipient'));
             $this->switch('is_open_telegram_customer_order', admin_trans('system-setting.fields.is_open_telegram_customer_order'))
                 ->default(BaseModel::STATUS_CLOSE)
                 ->help(admin_trans('system-setting.helps.is_open_telegram_customer_order'));
