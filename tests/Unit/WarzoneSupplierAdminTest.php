@@ -120,8 +120,8 @@ class WarzoneSupplierAdminTest extends TestCase
 
         $this->assertSame('0.5000', $status['effectiveCost']);
         $this->assertSame(2, $status['balanceCapacity']);
-        $this->assertSame(2, $status['externalStock']);
-        $this->assertSame(5, $status['displayStock']);
+        $this->assertSame(10, $status['externalStock']);
+        $this->assertSame(13, $status['displayStock']);
 
         $goods = new Goods();
         $goods->setRawAttributes(['id' => 16, 'gd_name' => 'Time-sensitive product']);
@@ -138,7 +138,7 @@ class WarzoneSupplierAdminTest extends TestCase
         );
     }
 
-    public function test_non_orderable_supplier_contributes_no_external_stock(): void
+    public function test_non_orderable_supplier_stock_remains_visible_for_estimation(): void
     {
         $setting = new WarzoneSupplierSetting([
             'unit_cost_usd' => '0.4000',
@@ -151,7 +151,7 @@ class WarzoneSupplierAdminTest extends TestCase
         $method->setAccessible(true);
         $status = $method->invoke(new WarzoneSupplierSettingController(), $setting, 1);
 
-        $this->assertSame(0, $status['externalStock']);
-        $this->assertSame(1, $status['displayStock']);
+        $this->assertSame(20, $status['externalStock']);
+        $this->assertSame(21, $status['displayStock']);
     }
 }

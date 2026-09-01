@@ -37,7 +37,7 @@ return [
         'supplier_orderable' => 'Supplier orderable',
         'orderable_yes' => 'Yes',
         'orderable_no' => 'No',
-        'external_stock' => 'External available stock',
+        'external_stock' => 'Estimated external stock',
         'display_stock' => 'Combined storefront stock',
         'price_warning_title' => 'Price mismatch:',
         'price_warning' => 'Configured cost is $:configured while the current API unit price is $:supplier. Review the estimate before enabling.',

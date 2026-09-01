@@ -195,11 +195,7 @@ class WarzoneSupplierSettingController extends AdminController
             : max(0, (int) $setting->last_supplier_stock);
         $supplierOrderable = $setting->getAttribute('last_supplier_orderable');
         $externalStock = $supplierAvailableStock === null
-            ? ($balanceCapacity === null
-                || $supplierStock === null
-                || $supplierOrderable === false
-                ? 0
-                : min($balanceCapacity, $supplierStock))
+            ? max(0, (int) ($balanceCapacity ?: 0), (int) ($supplierStock ?: 0))
             : max(0, $supplierAvailableStock);
         $priceMismatch = $setting->last_product_price_usd !== null
             && is_numeric($setting->last_product_price_usd)

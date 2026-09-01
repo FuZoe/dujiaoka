@@ -124,9 +124,12 @@ class WarzoneInventoryService
                 return 0;
             }
 
-            $remoteStock = !empty($service['orderable'])
-                ? max(0, (int) ($service['stock'] ?? 0))
-                : 0;
+            // Storefront stock uses the larger of the two configured
+            // estimates. If the supplier currently reports no stock but
+            // the account has enough balance to buy units, show that balance
+            // capacity; if the balance is empty, retain the supplier stock.
+            // The purchase job still checks orderable before placing an order.
+            $remoteStock = max(0, (int) ($service['stock'] ?? 0));
             $providerCost = isset($service['price']) && is_numeric($service['price'])
                 ? (string) $service['price']
                 : '0';
@@ -139,7 +142,7 @@ class WarzoneInventoryService
             $remoteStock = max(0, $remoteStock - $reservedQuantity);
             $affordable = (int) bcdiv($availableBalance, $effectiveCost, 0);
 
-            return max(0, min($remoteStock, $affordable));
+            return max(0, $remoteStock, $affordable);
         } catch (Throwable $exception) {
             Log::warning('Warzone supplier inventory could not be refreshed.', [
                 'goods_id' => $goods->getKey(),

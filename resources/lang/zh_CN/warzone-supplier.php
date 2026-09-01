@@ -37,7 +37,7 @@ return [
         'supplier_orderable' => '供应商当前可下单',
         'orderable_yes' => '是',
         'orderable_no' => '否',
-        'external_stock' => '外部可供库存',
+        'external_stock' => '外部可估算库存',
         'display_stock' => '商城合计库存',
         'price_warning_title' => '价格不一致：',
         'price_warning' => '配置单价为 $:configured，API 当前单件价为 $:supplier。系统会采用两者中较高者折算库存，避免高估余额。',

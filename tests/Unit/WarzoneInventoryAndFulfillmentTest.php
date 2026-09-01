@@ -71,10 +71,11 @@ class WarzoneInventoryAndFulfillmentTest extends TestCase
 
         $inventory->augment($goods);
 
-        // (5.00 - 1.00) / max(0.40, 0.50) = 8 supplier units, plus two local cards.
+        // max(20 supplier units - 2 reserved units,
+        // (5.00 - 1.00) / max(0.40, 0.50) = 8) = 18, plus two local cards.
         $this->assertSame(2, (int) $goods->local_in_stock);
-        $this->assertSame(8, (int) $goods->supplier_in_stock);
-        $this->assertSame(10, (int) $goods->in_stock);
+        $this->assertSame(18, (int) $goods->supplier_in_stock);
+        $this->assertSame(20, (int) $goods->in_stock);
         $this->assertSame('5', (string) $setting->fresh()->last_balance_usd);
         $this->assertSame(20, (int) $setting->fresh()->last_supplier_stock);
     }
@@ -93,6 +94,23 @@ class WarzoneInventoryAndFulfillmentTest extends TestCase
 
         $this->assertSame(1, (int) $goods->in_stock);
         $this->assertSame(0, WarzoneSupplierSetting::query()->count());
+    }
+
+    public function test_balance_capacity_is_visible_when_supplier_reports_no_stock(): void
+    {
+        $this->insertGoods();
+        $this->readySetting();
+        $client = Mockery::mock(WarzoneShopClient::class);
+        $client->shouldReceive('snapshot')->once()->andReturn($this->snapshot('2.00', '0.40', 0));
+        $goods = Goods::query()->withCount(['carmis' => function ($query) {
+            $query->where('status', Carmis::STATUS_UNSOLD);
+        }])->findOrFail(16);
+
+        (new WarzoneInventoryService($client))->augment($goods);
+
+        // max(2.00 / 0.40, 0 supplier units) = 5 estimated units.
+        $this->assertSame(5, (int) $goods->supplier_in_stock);
+        $this->assertSame(5, (int) $goods->in_stock);
     }
 
     public function test_paid_order_with_insufficient_local_stock_is_queued_once(): void
