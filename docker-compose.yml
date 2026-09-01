@@ -37,6 +37,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    entrypoint: ["/entrypoint"]
+    command: ["/app/docker/entrypoint.sh"]
     ports:
       - "127.0.0.1:3220:80"
     volumes:
