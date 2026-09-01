@@ -76,4 +76,13 @@ return [
         'accepted_order_types' => ['C2C', 'PAY'],
     ],
 
+    'warzone' => [
+        'base_url' => env('WARZONE_API_BASE_URL', 'https://api.warzoneshop.in'),
+        'connect_timeout' => env('WARZONE_API_CONNECT_TIMEOUT', 5),
+        'timeout' => env('WARZONE_API_TIMEOUT', 15),
+        'get_attempts' => env('WARZONE_API_GET_ATTEMPTS', 3),
+        'post_safe_attempts' => env('WARZONE_API_POST_SAFE_ATTEMPTS', 3),
+        'retry_delay_ms' => env('WARZONE_API_RETRY_DELAY_MS', 250),
+    ],
+
 ];

@@ -12,6 +12,9 @@ Route::group([
     'middleware' => config('admin.route.middleware'),
 ], function (Router $router) {
     $router->get('/', 'HomeController@index');
+    $router->get('warzone-supplier', 'WarzoneSupplierSettingController@index');
+    $router->post('warzone-supplier', 'WarzoneSupplierSettingController@index');
+    $router->post('warzone-supplier/test', 'WarzoneSupplierSettingController@test');
     $router->resource('goods', 'GoodsController');
     $router->resource('goods-group', 'GoodsGroupController');
     $router->resource('carmis', 'CarmisController');

@@ -191,11 +191,11 @@ class RestockNotificationService
                 $type = (int) Goods::query()->whereKey($goodsId)->value('type');
             }
 
+            // Do not call the supplier over the network from an order
+            // settlement transaction. The inventory service uses the last
+            // persisted snapshot while still subtracting queued purchases.
             if ($type === Goods::AUTOMATIC_DELIVERY) {
-                return (int) Carmis::query()
-                    ->where('goods_id', $goodsId)
-                    ->where('status', Carmis::STATUS_UNSOLD)
-                    ->count();
+                return app(WarzoneInventoryService::class)->availableStock($goods, false);
             }
 
             $stock = Goods::query()->whereKey($goodsId)->value('in_stock');

@@ -69,6 +69,16 @@ class GoodsController extends AdminController
                 );
             });
             $grid->actions(function (Grid\Displayers\Actions $actions) {
+                if (request('_scope_') != admin_trans('dujiaoka.trashed')
+                    && (int) $actions->row->type === GoodsModel::AUTOMATIC_DELIVERY) {
+                    $actions->append(
+                        '<a href="' . admin_url('warzone-supplier?goods_id=' . (int) $actions->getKey()) . '"'
+                        . ' class="btn btn-sm btn-outline-primary"'
+                        . ' title="' . e(admin_trans('warzone-supplier.actions.configure')) . '">'
+                        . '<i class="fa fa-truck"></i> ' . e(admin_trans('warzone-supplier.actions.configure'))
+                        . '</a>'
+                    );
+                }
                 if (request('_scope_') == admin_trans('dujiaoka.trashed')) {
                     $actions->append(new Restore(GoodsModel::class));
                 }

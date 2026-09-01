@@ -28,6 +28,11 @@ use App\Models\GoodsGroup;
 class GoodsService
 {
 
+    public function applyAvailableStock(Goods $goods): Goods
+    {
+        return app(WarzoneInventoryService::class)->augment($goods);
+    }
+
     /**
      * 获取所有分类并加载该分类下的商品
      *
@@ -48,6 +53,12 @@ class GoodsService
             ->where('is_open', GoodsGroup::STATUS_OPEN)
             ->orderBy('ord', 'DESC')
             ->get();
+        $inventory = app(WarzoneInventoryService::class);
+        $goods->each(function (GoodsGroup $group) use ($inventory) {
+            $group->goods->each(function (Goods $goods) use ($inventory) {
+                $inventory->augment($goods);
+            });
+        });
         // 将自动
         return $goods ? $goods->toArray() : null;
     }
@@ -69,6 +80,9 @@ class GoodsService
             ->withCount(['carmis' => function($query) {
                 $query->where('status', Carmis::STATUS_UNSOLD);
             }])->where('id', $id)->first();
+        if ($goods) {
+            $this->applyAvailableStock($goods);
+        }
         return $goods;
     }
 

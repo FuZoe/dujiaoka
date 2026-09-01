@@ -58,6 +58,7 @@ class ShopApiController extends Controller
             ->orderByDesc('ord')
             ->get()
             ->map(function (Goods $good) {
+                $this->goodsService->applyAvailableStock($good);
                 return $this->productPayload($good);
             })
             ->values()

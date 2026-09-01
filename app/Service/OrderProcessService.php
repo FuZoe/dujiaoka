@@ -16,13 +16,19 @@ use App\Jobs\OrderExpired;
 use App\Jobs\ServerJiang;
 use App\Jobs\BarkPush;
 use App\Jobs\WorkWeiXinPush;
+use App\Jobs\WarzoneFulfillOrder;
 use App\Models\BaseModel;
+use App\Models\Carmis;
 use App\Models\Coupon;
 use App\Models\Goods;
 use App\Models\Order;
+use App\Models\WarzoneSupplierPurchase;
+use App\Models\WarzoneSupplierSetting;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * 订单处理层
@@ -402,6 +408,7 @@ class OrderProcessService
         bool $allowFulfillmentRetry = false
     )
     {
+        $warzonePurchase = null;
         DB::beginTransaction();
         try {
             // 得到订单详情
@@ -469,6 +476,20 @@ class OrderProcessService
             try {
                 if ($order->type == Order::AUTOMATIC_DELIVERY) {
                     $completedOrder = $this->processAuto($order);
+                    if ((int) $completedOrder->status === Order::STATUS_ABNORMAL) {
+                        $warzonePurchase = $this->queueWarzonePurchase($completedOrder);
+                        if ($warzonePurchase && !$warzonePurchase->isTerminal()) {
+                            $completedOrder->status = Order::STATUS_PROCESSING;
+                            $completedOrder->info = '支付已确认，正在从供应商补充库存并自动发货。';
+                            $completedOrder->save();
+                            $order = $completedOrder;
+                        } else {
+                            // A failed or ambiguous purchase is deliberately
+                            // left as an abnormal paid order. Do not enqueue a
+                            // terminal record or present it as processing.
+                            $warzonePurchase = null;
+                        }
+                    }
                 } else {
                     $completedOrder = $this->processManual($order);
                 }
@@ -492,6 +513,7 @@ class OrderProcessService
             // sale until a later fulfillment retry actually completes.
             if (!$deliveryException) {
                 if (!in_array((int) $completedOrder->status, [
+                    Order::STATUS_PROCESSING,
                     Order::STATUS_ABNORMAL,
                     Order::STATUS_FAILURE,
                 ], true)) {
@@ -502,12 +524,25 @@ class OrderProcessService
                 }
                 DB::commit();
                 if ($stockBefore !== null && $stockAfter !== null) {
-                    $stockNotifications->dispatchForOutOfStock(
-                        $order->goods,
-                        $stockBefore,
-                        $stockAfter,
-                        $order->order_sn
-                    );
+                    if (!$warzonePurchase) {
+                        $stockNotifications->dispatchForOutOfStock(
+                            $order->goods,
+                            $stockBefore,
+                            $stockAfter,
+                            $order->order_sn
+                        );
+                    }
+                }
+            }
+            if ($warzonePurchase) {
+                try {
+                    WarzoneFulfillOrder::dispatch((int) $warzonePurchase->getKey());
+                } catch (Throwable $exception) {
+                    Log::error('Warzone fulfillment job could not be queued.', [
+                        'purchase_id' => $warzonePurchase->getKey(),
+                        'order_sn' => $completedOrder->order_sn,
+                        'exception' => get_class($exception),
+                    ]);
                 }
             }
             $telegramOrders = app(TelegramOrderNotificationService::class);
@@ -533,6 +568,68 @@ class OrderProcessService
                 DB::rollBack();
             }
             throw new RuleValidationException($exception->getMessage());
+        }
+    }
+
+    private function queueWarzonePurchase(Order $order): ?WarzoneSupplierPurchase
+    {
+        try {
+            $setting = WarzoneSupplierSetting::query()
+                ->where('goods_id', (int) $order->goods_id)
+                ->first();
+            if (!$setting || !$setting->isReady()) {
+                return null;
+            }
+
+            $localStock = (int) Carmis::query()
+                ->where('goods_id', $order->goods_id)
+                ->where('status', Carmis::STATUS_UNSOLD)
+                ->count();
+            $quantity = max(0, (int) $order->buy_amount - $localStock);
+            if ($quantity === 0) {
+                return null;
+            }
+            $configuredCost = (string) $setting->unit_cost_usd;
+            $lastProviderCost = is_numeric($setting->last_product_price_usd)
+                ? (string) $setting->last_product_price_usd
+                : '0';
+            $reservedUnitCost = bccomp($lastProviderCost, $configuredCost, 4) > 0
+                ? $lastProviderCost
+                : $configuredCost;
+
+            $existing = WarzoneSupplierPurchase::query()
+                ->where('order_id', $order->getKey())
+                ->first();
+            if ($existing) {
+                // A failed or ambiguous purchase must remain visible for
+                // reconciliation. Never turn it back into a new POST merely
+                // because a payment callback was repeated.
+                return $existing;
+            }
+
+            return WarzoneSupplierPurchase::query()->create([
+                'setting_id' => $setting->getKey(),
+                'goods_id' => $order->goods_id,
+                'order_id' => $order->getKey(),
+                'order_sn' => $order->order_sn,
+                'service_id' => $setting->service_id,
+                'quantity' => $quantity,
+                'status' => WarzoneSupplierPurchase::STATUS_QUEUED,
+                'unit_cost_usd' => $reservedUnitCost,
+                'total_cost_usd' => bcmul(
+                    $reservedUnitCost,
+                    (string) $quantity,
+                    4
+                ),
+            ]);
+        } catch (Throwable $exception) {
+            Log::warning('Warzone fulfillment could not be prepared.', [
+                'order_sn' => $order->order_sn,
+                'goods_id' => $order->goods_id,
+                'exception' => get_class($exception),
+            ]);
+
+            return null;
         }
     }
 
